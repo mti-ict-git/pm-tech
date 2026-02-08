@@ -18,6 +18,51 @@ const isPushEnabled = (): boolean => {
 
 type PushPermissionResult = { receive: string };
 type PushRegistrationToken = { value: string };
+type PushTapEvent = { notification?: unknown };
+
+const readString = (obj: Record<string, unknown>, key: string): string | null => {
+  const raw = obj[key];
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  return v.length > 0 ? v : null;
+};
+
+const getPushText = (value: unknown): { title: string; body: string } | null => {
+  if (typeof value !== "object" || value === null) return null;
+  if (!("notification" in value)) return null;
+  const notification = (value as PushTapEvent).notification;
+  if (typeof notification !== "object" || notification === null) return null;
+
+  const notificationObj = notification as Record<string, unknown>;
+
+  const data =
+    "data" in notificationObj && typeof notificationObj.data === "object" && notificationObj.data !== null
+      ? (notificationObj.data as Record<string, unknown>)
+      : null;
+
+  const titleCandidates = [
+    readString(notificationObj, "title"),
+    data ? readString(data, "title") : null,
+    data ? readString(data, "dataTitle") : null,
+    data ? readString(data, "gcm.notification.title") : null,
+    data ? readString(data, "google.c.a.c_l") : null,
+  ];
+
+  const bodyCandidates = [
+    readString(notificationObj, "body"),
+    data ? readString(data, "body") : null,
+    data ? readString(data, "dataBody") : null,
+    data ? readString(data, "message") : null,
+    data ? readString(data, "gcm.notification.body") : null,
+    data ? readString(data, "google.c.a.c_id") : null,
+  ];
+
+  const title = titleCandidates.find((v): v is string => typeof v === "string") ?? null;
+  const body = bodyCandidates.find((v): v is string => typeof v === "string") ?? null;
+
+  if (!title && !body) return null;
+  return { title: title ?? "Notification", body: body ?? "" };
+};
 
 export const registerDeviceToken = async (): Promise<string | null> => {
   const { Capacitor } = await import("@capacitor/core");
@@ -88,6 +133,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const isAuthenticated = !!user;
   const pushRegistering = useRef(false);
+  const [pushPopup, setPushPopup] = useState<{ title: string; body: string } | null>(null);
+  const pushOkRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const token = getAccessToken();
@@ -103,6 +150,38 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       setAuthInvalidListener(null);
     };
   }, []);
+
+  useEffect(() => {
+    let handle: { remove: () => Promise<void> } | null = null;
+    void (async () => {
+      const { Capacitor } = await import("@capacitor/core");
+      if (!Capacitor.isNativePlatform()) return;
+      const { PushNotifications } = await import("@capacitor/push-notifications");
+
+      handle = await PushNotifications.addListener("pushNotificationActionPerformed", (event: unknown) => {
+        const text = getPushText(event);
+        if (!text) return;
+        setPushPopup(text);
+      });
+    })();
+
+    return () => {
+      if (handle) void handle.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!pushPopup) return;
+    pushOkRef.current?.focus();
+
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setPushPopup(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [pushPopup]);
 
   useEffect(() => {
     if (!user) return;
@@ -158,5 +237,52 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   const value = useMemo<AuthContextValue>(() => ({ isAuthenticated, user, login: doLogin, biometricLogin, refreshUser, logout }), [isAuthenticated, user]);
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+      {pushPopup ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="push-popup-title"
+          onMouseDown={(e) => {
+            if (e.currentTarget === e.target) setPushPopup(null);
+          }}
+        >
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <h2 id="push-popup-title" className="text-base font-semibold text-slate-900 dark:text-slate-100">
+                  {pushPopup.title}
+                </h2>
+                <button
+                  type="button"
+                  className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                  onClick={() => setPushPopup(null)}
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              </div>
+              {pushPopup.body.trim() ? (
+                <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{pushPopup.body}</p>
+              ) : null}
+
+              <div className="mt-4 flex justify-end">
+                <button
+                  ref={pushOkRef}
+                  type="button"
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onClick={() => setPushPopup(null)}
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </AuthContext.Provider>
+  );
 };

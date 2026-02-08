@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../providers/AuthProvider';
 import type { LoginProvider } from '../lib/api';
 import { isBiometricAvailable } from '../lib/auth';
+import logoUrl from '../assets/logo.png';
+import bannerUrl from '../assets/banner.png';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -64,7 +66,7 @@ const Login: React.FC = () => {
       <div className="relative w-full h-[30svh] shrink-0">
         <div className="absolute inset-0 bg-slate-900">
            <img 
-            src="https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?q=80&w=2670&auto=format&fit=crop" 
+            src={bannerUrl}
             alt="Factory" 
             className={`w-full h-full object-cover transition-opacity duration-700 ${mounted ? 'opacity-60' : 'opacity-0'}`}
            />
@@ -74,7 +76,7 @@ const Login: React.FC = () => {
         {/* Logo and Title Content */}
         <div className={`absolute inset-0 flex flex-col items-center justify-center pb-4 z-10 text-center transition-all duration-700 ease-out ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'}`}>
           <div className="w-20 h-20 bg-primary/20 backdrop-blur-md rounded-3xl flex items-center justify-center shadow-2xl shadow-primary/30 mb-3 border border-white/10">
-            <span className="material-symbols-outlined text-white text-[40px]">precision_manufacturing</span>
+            <img src={logoUrl} alt="PM Tech" className="w-12 h-12 object-contain" />
           </div>
           <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-md">PM Tech</h1>
           <p className="text-blue-100 font-medium text-xs mt-1 tracking-wide drop-shadow-sm">Preventive Maintenance Simplified</p>
