@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "782317751177",
+    "project_id": "preventive-maintenance-project",
+    "storage_bucket": "preventive-maintenance-project.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:782317751177:android:be0b4c390ff91eaa3b6f58",
+        "android_client_info": {
+          "package_name": "com.merdekatsingshan.pmtech"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDKgJHk_9cdjnuD4_e96g6QBArVAXE5cvs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

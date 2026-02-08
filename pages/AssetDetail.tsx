@@ -171,8 +171,8 @@ const AssetDetail: React.FC = () => {
   };
 
   const canPmNow = useMemo(() => {
-    const roles = user?.roles ?? [];
-    return roles.includes('Supervisor') || roles.includes('Admin') || roles.includes('Superadmin');
+    const roleSet = new Set((user?.roles ?? []).map((r) => r.trim().toLowerCase()));
+    return roleSet.has('supervisor') || roleSet.has('admin') || roleSet.has('superadmin');
   }, [user?.roles]);
 
   const pmNowDisabled = !asset?.pm.enabled || !asset?.pm.defaultTemplateId;
