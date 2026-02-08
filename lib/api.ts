@@ -12,6 +12,65 @@ let primaryApiBase: string | null = null;
 let preferFallback = false;
 let lastDiscoveryAttempt = 0;
 
+const cachePrefix = "pmtech.cache.v1:";
+const cacheLastWriteAtKey = "pmtech.cacheLastWriteAt";
+
+type CacheEntry<T> = { savedAt: string; value: T };
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+const shouldCachePath = (path: string): boolean => {
+  if (!path.startsWith("/api/")) return false;
+  if (path.startsWith("/api/auth/")) return false;
+  if (path.includes("/evidence/") && path.endsWith("/download")) return false;
+  if (path.includes("/image")) return false;
+  return (
+    path.startsWith("/api/tasks") ||
+    path.startsWith("/api/assets") ||
+    path.startsWith("/api/work-orders") ||
+    path.startsWith("/api/dashboard") ||
+    path.startsWith("/api/system") ||
+    path.startsWith("/api/facilities")
+  );
+};
+
+const cacheKeyFor = (path: string): string => `${cachePrefix}${path}`;
+
+const readCache = <T>(path: string): CacheEntry<T> | null => {
+  try {
+    const raw = localStorage.getItem(cacheKeyFor(path));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed)) return null;
+    const savedAt = parsed.savedAt;
+    if (typeof savedAt !== "string" || !savedAt.trim()) return null;
+    if (!("value" in parsed)) return null;
+    return { savedAt, value: (parsed as { value: T }).value };
+  } catch {
+    return null;
+  }
+};
+
+const writeCache = <T>(path: string, value: T): void => {
+  try {
+    const savedAt = new Date().toISOString();
+    const entry: CacheEntry<T> = { savedAt, value };
+    localStorage.setItem(cacheKeyFor(path), JSON.stringify(entry));
+    localStorage.setItem(cacheLastWriteAtKey, savedAt);
+  } catch {
+    return;
+  }
+};
+
+export const getOfflineCacheLastWriteAt = (): string | null => {
+  try {
+    const raw = localStorage.getItem(cacheLastWriteAtKey);
+    return typeof raw === "string" && raw.trim() ? raw : null;
+  } catch {
+    return null;
+  }
+};
+
 const normalizeBase = (base: string): string => base.replace(/\/+$/, "");
 
 export const API_BASE_URL = fallbackApiBaseUrl;
@@ -127,6 +186,8 @@ const parseError = async (res: Response): Promise<ApiError> => {
 
 export const apiFetchJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
   const hasBody = typeof init?.body !== "undefined" && init?.body !== null;
+  const method = (init?.method ?? "GET").toUpperCase();
+  const canUseCache = method === "GET" && shouldCachePath(path);
   const makeInit = (tokenValue?: string | null): RequestInit => {
     const headers: Record<string, string> = { Accept: "application/json" };
     const token = typeof tokenValue === "string" ? tokenValue : getAccessToken();
@@ -139,7 +200,17 @@ export const apiFetchJson = async <T>(path: string, init?: RequestInit): Promise
     };
   };
 
-  const res = await fetchWithFallback(path, makeInit());
+  let res: Response;
+  try {
+    res = await fetchWithFallback(path, makeInit());
+  } catch (e) {
+    if (canUseCache) {
+      const cached = readCache<T>(path);
+      if (cached) return cached.value;
+    }
+    const msg = e instanceof Error ? e.message : "Network error";
+    throw new Error(msg);
+  }
   if (res.status === 401) {
     const refreshed = await refresh();
     if (!refreshed) {
@@ -150,10 +221,14 @@ export const apiFetchJson = async <T>(path: string, init?: RequestInit): Promise
     }
     const retry = await fetchWithFallback(path, makeInit(getAccessToken() ?? ""));
     if (!retry.ok) throw await parseError(retry);
-    return (await retry.json()) as T;
+    const json = (await retry.json()) as T;
+    if (canUseCache) writeCache(path, json);
+    return json;
   }
   if (!res.ok) throw await parseError(res);
-  return (await res.json()) as T;
+  const json = (await res.json()) as T;
+  if (canUseCache) writeCache(path, json);
+  return json;
 };
 
 const apiFetchWithAuthRetry = async (path: string, init?: RequestInit): Promise<Response> => {

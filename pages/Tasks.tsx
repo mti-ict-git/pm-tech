@@ -6,12 +6,14 @@ const Tasks: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [tab, setTab] = useState<'all' | 'in_progress' | 'upcoming' | 'due_today' | 'overdue' | 'completed'>('all');
+  const [assigned, setAssigned] = useState<'any' | 'me'>('any');
   const [items, setItems] = useState<TaskListItem[]>([]);
   const [counts, setCounts] = useState<TaskStatusCountsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   type TabKey = 'all' | 'in_progress' | 'upcoming' | 'due_today' | 'overdue' | 'completed';
+  type AssignedKey = 'any' | 'me';
 
   const parseTabFromSearch = (search: string): TabKey => {
     const raw = new URLSearchParams(search).get('tab');
@@ -19,14 +21,35 @@ const Tasks: React.FC = () => {
     return 'all';
   };
 
+  const parseAssignedFromSearch = (search: string): AssignedKey => {
+    const raw = new URLSearchParams(search).get('assigned');
+    if (raw === 'me' || raw === 'any') return raw;
+    return 'any';
+  };
+
+  const buildTasksUrl = (nextTab: TabKey, nextAssigned: AssignedKey): string => {
+    const params = new URLSearchParams();
+    params.set('tab', nextTab);
+    if (nextAssigned !== 'any') params.set('assigned', nextAssigned);
+    const search = params.toString();
+    return search ? `/tasks?${search}` : '/tasks';
+  };
+
   const setTabAndUrl = (next: TabKey): void => {
     setTab(next);
-    navigate(`/tasks?tab=${encodeURIComponent(next)}`, { replace: true });
+    navigate(buildTasksUrl(next, assigned), { replace: true });
+  };
+
+  const setAssignedAndUrl = (next: AssignedKey): void => {
+    setAssigned(next);
+    navigate(buildTasksUrl(tab, next), { replace: true });
   };
 
   useEffect(() => {
     const next = parseTabFromSearch(location.search);
     setTab((prev) => (prev === next ? prev : next));
+    const nextAssigned = parseAssignedFromSearch(location.search);
+    setAssigned((prev) => (prev === nextAssigned ? prev : nextAssigned));
   }, [location.search]);
 
   const startOfDayIso = (d: Date): string => {
@@ -81,7 +104,7 @@ const Tasks: React.FC = () => {
       setError(null);
       try {
         const now = new Date();
-        const base = { assigned: 'any' as const, maintenanceType: 'PM' as const, page: 1, pageSize: 50 };
+        const base = { assigned, maintenanceType: 'PM' as const, page: 1, pageSize: 50 };
         const input: Parameters<typeof apiListTasks>[0] =
           tab === 'in_progress'
             ? { ...base, status: 'in_progress' }
@@ -98,7 +121,7 @@ const Tasks: React.FC = () => {
         const res = await apiListTasks(input);
         if (!isCancelled) setItems(res.items);
         try {
-          const countsRes = await apiGetTaskStatusCounts({ assigned: 'any', maintenanceType: 'PM' });
+          const countsRes = await apiGetTaskStatusCounts({ assigned, maintenanceType: 'PM' });
           if (!isCancelled) setCounts(countsRes);
         } catch {
           if (!isCancelled) setCounts(null);
@@ -111,7 +134,7 @@ const Tasks: React.FC = () => {
     };
     void load();
     return () => { isCancelled = true; };
-  }, [tab]);
+  }, [tab, assigned]);
 
   const progressPct = (t: TaskListItem): number => {
     const total = Number(t.checklistTotal ?? 0) || 0;
@@ -145,13 +168,22 @@ const Tasks: React.FC = () => {
       <header className="flex flex-col px-4 pt-2 gap-4 sticky top-0 z-40 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md pb-2">
         <div className="flex items-center justify-between pt-2">
           <div className="flex flex-col">
-            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">PM Tasks</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">{assigned === 'me' ? 'My Tasks' : 'PM Tasks'}</h1>
             <div className="flex items-center gap-1 mt-1 text-slate-500 dark:text-slate-400">
               <span className="material-symbols-outlined text-xs">cloud_done</span>
               <span className="text-[10px] uppercase font-bold tracking-wider">Synced 2m ago</span>
             </div>
           </div>
           <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setAssignedAndUrl(assigned === 'me' ? 'any' : 'me')}
+              className={`w-10 h-10 flex items-center justify-center rounded-full ${assigned === 'me' ? 'bg-primary text-white' : 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300'}`}
+              aria-label="My tasks"
+              aria-pressed={assigned === 'me'}
+            >
+              <span className="material-symbols-outlined">assignment_ind</span>
+            </button>
             <button onClick={() => navigate('/schedule')} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                <span className="material-symbols-outlined">calendar_month</span>
             </button>

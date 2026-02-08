@@ -38,6 +38,7 @@ const TaskDetail: React.FC = () => {
   const [assetNotes, setAssetNotes] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [approvalActionLoading, setApprovalActionLoading] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -47,6 +48,7 @@ const TaskDetail: React.FC = () => {
   const [reviseReason, setReviseReason] = useState('');
   const [reviseReopenTask, setReviseReopenTask] = useState(true);
   const [checklistDraft, setChecklistDraft] = useState<Record<string, { outcome: 0 | 1 | 2 | null; notes: string }>>({});
+  const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
@@ -84,6 +86,7 @@ const TaskDetail: React.FC = () => {
   const checklistDraftInitTaskIdRef = useRef<string | null>(null);
 
   const checklistDraftStorageKey = (id: string): string => `pm-tech.checklistDraft.${id}`;
+  const checklistDraftSavedAtStorageKey = (id: string): string => `pm-tech.checklistDraftSavedAt.${id}`;
 
   const parseChecklistDraft = (
     raw: string,
@@ -115,6 +118,7 @@ const TaskDetail: React.FC = () => {
     const load = async () => {
       setLoading(true);
       setError(null);
+      setSuccess(null);
       try {
         const res = await apiGetTask(taskId);
         if (!isCancelled) setTask(res);
@@ -178,9 +182,10 @@ const TaskDetail: React.FC = () => {
       base[item.id] = { outcome, notes };
     }
 
-    const stored = parseChecklistDraft(sessionStorage.getItem(checklistDraftStorageKey(task.id)) ?? '');
+    const stored = parseChecklistDraft(localStorage.getItem(checklistDraftStorageKey(task.id)) ?? '');
     if (!stored) {
       setChecklistDraft(base);
+      setDraftSavedAt(localStorage.getItem(checklistDraftSavedAtStorageKey(task.id)) ?? null);
       return;
     }
     const merged: Record<string, { outcome: 0 | 1 | 2 | null; notes: string }> = {};
@@ -189,16 +194,29 @@ const TaskDetail: React.FC = () => {
       merged[id] = localValue ?? serverValue;
     }
     setChecklistDraft(merged);
+    setDraftSavedAt(localStorage.getItem(checklistDraftSavedAtStorageKey(task.id)) ?? null);
   }, [task?.id]);
 
   useEffect(() => {
     if (!task) return;
     try {
-      sessionStorage.setItem(checklistDraftStorageKey(task.id), JSON.stringify(checklistDraft));
+      localStorage.setItem(checklistDraftStorageKey(task.id), JSON.stringify(checklistDraft));
     } catch {
       return;
     }
   }, [task?.id, checklistDraft]);
+
+  const onSaveDraft = (): void => {
+    if (!task) return;
+    try {
+      localStorage.setItem(checklistDraftStorageKey(task.id), JSON.stringify(checklistDraft));
+      const savedAt = new Date().toISOString();
+      localStorage.setItem(checklistDraftSavedAtStorageKey(task.id), savedAt);
+      setDraftSavedAt(savedAt);
+    } catch {
+      setError('Failed to save draft locally');
+    }
+  };
 
   useEffect(() => {
     return () => {
@@ -663,11 +681,24 @@ const TaskDetail: React.FC = () => {
       return;
     }
     setActionLoading(true);
+    setError(null);
+    setSuccess(null);
     try {
       const checklistResults = buildChecklistResults();
       await apiSubmitTaskForApproval({ taskId: task.id, checklistResults });
       const res = await apiGetTask(task.id);
       setTask(res);
+
+      const nextApprovalStatus = (res.approvalStatus ?? '').trim();
+      if (nextApprovalStatus === 'PendingSupervisor') {
+        setSuccess('Submitted successfully. Waiting for supervisor review.');
+      } else if (nextApprovalStatus === 'PendingSuperadmin') {
+        setSuccess('Submitted successfully. Waiting for superadmin review.');
+      } else if (nextApprovalStatus === 'Approved') {
+        setSuccess('Submitted successfully. Task is approved.');
+      } else {
+        setSuccess('Submitted successfully.');
+      }
     } catch (e) {
       const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to submit';
       setError(message);
@@ -826,6 +857,13 @@ const TaskDetail: React.FC = () => {
             </div>
           </section>
         )}
+        {success ? (
+          <section className="px-4 pt-4">
+            <div className="bg-emerald-50 dark:bg-emerald-950/30 rounded-xl border border-emerald-200 dark:border-emerald-900 p-3 text-sm text-emerald-800 dark:text-emerald-200">
+              {success}
+            </div>
+          </section>
+        ) : null}
         {task.approvalStatus === 'Rejected' ? (
           <section className="px-4 pt-4">
             <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl border border-rose-200 dark:border-rose-900 p-3">
@@ -1440,7 +1478,7 @@ const TaskDetail: React.FC = () => {
                   <button
                     disabled={actionLoading}
                     onClick={onStart}
-                    className="col-span-4 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                    className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
                   >
                     <span className="material-symbols-outlined text-xl">play_arrow</span>
                     Start
@@ -1449,7 +1487,7 @@ const TaskDetail: React.FC = () => {
                   <button
                     disabled={actionLoading}
                     onClick={onResume}
-                    className="col-span-4 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                    className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
                   >
                     <span className="material-symbols-outlined text-xl">play_arrow</span>
                     Resume
@@ -1458,7 +1496,7 @@ const TaskDetail: React.FC = () => {
                   <button
                     disabled={actionLoading || !canPause}
                     onClick={onPause}
-                    className="col-span-4 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                    className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
                   >
                     <span className="material-symbols-outlined text-xl">pause</span>
                     Pause
@@ -1466,9 +1504,18 @@ const TaskDetail: React.FC = () => {
                 )}
 
                 <button
+                  disabled={actionLoading || !canEditChecklist}
+                  onClick={onSaveDraft}
+                  className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors disabled:opacity-60"
+                >
+                  <span className="material-symbols-outlined text-xl">save</span>
+                  Save
+                </button>
+
+                <button
                   disabled={actionLoading || !canSubmitForApproval}
                   onClick={() => void onSubmitForApproval()}
-                  className="col-span-8 h-12 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform disabled:opacity-60"
+                  className="col-span-6 h-12 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform disabled:opacity-60"
                 >
                   <span className="material-symbols-outlined text-xl">send</span>
                   Submit for approval

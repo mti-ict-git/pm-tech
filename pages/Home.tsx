@@ -352,7 +352,7 @@ const Home: React.FC = () => {
               <span className="material-symbols-outlined">qr_code_scanner</span>
               <span className="font-semibold">{scanLoading ? 'Scanning…' : 'Scan QR'}</span>
             </button>
-            <button onClick={() => navigate('/tasks')} className="flex items-center gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm active:scale-95 transition-transform">
+            <button onClick={() => navigate('/tasks?assigned=me')} className="flex items-center gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm active:scale-95 transition-transform">
               <span className="material-symbols-outlined text-primary">assignment_turned_in</span>
               <span className="font-semibold">My Tasks</span>
             </button>
