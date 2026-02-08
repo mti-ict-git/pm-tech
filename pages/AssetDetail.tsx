@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ApiError, apiCreatePmNowTask, apiDownloadAssetImage, apiGetAsset, apiGetAssetHistory, type Asset, type AssetHistoryItem } from '../lib/api';
+import { ApiError, apiCreatePmNowTask, apiDownloadAssetImage, apiFindAssetIdByTag, apiGetAsset, apiGetAssetHistory, type Asset, type AssetHistoryItem } from '../lib/api';
 import { useAuth } from '../providers/AuthProvider';
 
 const RECENT_ASSETS_KEY = 'pm_recent_assets_v1';
@@ -73,6 +73,9 @@ const AssetDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [pmNowLoading, setPmNowLoading] = useState(false);
 
+  const [scanSupported, setScanSupported] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -108,6 +111,28 @@ const AssetDetail: React.FC = () => {
       cancelled = true;
     };
   }, [assetId]);
+
+  useEffect(() => {
+    let active = true;
+    const load = async (): Promise<void> => {
+      try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (!Capacitor.isNativePlatform()) {
+          if (active) setScanSupported(false);
+          return;
+        }
+        const { BarcodeScanner } = await import('@capacitor-mlkit/barcode-scanning');
+        const { supported } = await BarcodeScanner.isSupported();
+        if (active) setScanSupported(Boolean(supported));
+      } catch {
+        if (active) setScanSupported(false);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!assetId) return;
@@ -197,6 +222,50 @@ const AssetDetail: React.FC = () => {
     }
   };
 
+  const onScanQr = async (): Promise<void> => {
+    setScanLoading(true);
+    setError(null);
+    try {
+      const { Capacitor } = await import('@capacitor/core');
+      if (!Capacitor.isNativePlatform()) {
+        setError('QR scan is only available on Android app');
+        return;
+      }
+
+      const { BarcodeScanner, BarcodeFormat } = await import('@capacitor-mlkit/barcode-scanning');
+      const { supported } = await BarcodeScanner.isSupported();
+      if (!supported) {
+        setError('QR scan is not supported on this device');
+        return;
+      }
+
+      const perms = await BarcodeScanner.requestPermissions();
+      if (perms.camera !== 'granted' && perms.camera !== 'limited') {
+        setError('Camera permission is required to scan QR');
+        return;
+      }
+
+      const res = await BarcodeScanner.scan({ formats: [BarcodeFormat.QrCode] });
+      const first = res.barcodes[0];
+      const tag = first?.rawValue?.trim() ?? '';
+      if (!tag) {
+        setError('No QR detected');
+        return;
+      }
+
+      const nextAssetId = await apiFindAssetIdByTag(tag);
+      if (!nextAssetId) {
+        setError(`Asset not found for tag: ${tag}`);
+        return;
+      }
+      navigate(`/asset/${nextAssetId}`, { replace: true });
+    } catch {
+      setError('Failed to scan QR');
+    } finally {
+      setScanLoading(false);
+    }
+  };
+
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-background-light dark:bg-background-dark pb-24">
       {/* Header */}
@@ -206,8 +275,14 @@ const AssetDetail: React.FC = () => {
         </div>
         <h2 className="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center">Asset Detail</h2>
         <div className="flex w-10 items-center justify-end">
-          <button className="text-slate-900 dark:text-white">
-            <span className="material-symbols-outlined">more_horiz</span>
+          <button
+            type="button"
+            onClick={() => void onScanQr()}
+            disabled={!scanSupported || scanLoading}
+            className="text-slate-900 dark:text-white disabled:opacity-60 disabled:cursor-not-allowed"
+            aria-label="Scan QR"
+          >
+            <span className="material-symbols-outlined">{scanLoading ? 'progress_activity' : 'qr_code_scanner'}</span>
           </button>
         </div>
       </div>
@@ -218,13 +293,19 @@ const AssetDetail: React.FC = () => {
             {error}
           </div>
         )}
-        <div className="relative w-full aspect-video bg-slate-200 dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm group">
-          <div
-            className="absolute inset-0 bg-contain bg-center bg-no-repeat"
-            style={{
-              backgroundImage: `url('${assetImageUrl ?? "https://lh3.googleusercontent.com/aida-public/AB6AXuAtBssKtHjJUDg9R9XWu84BgpPzj9QtIzO7r1gwXJnPsLZhHfy-IQc11PYjstsKrYZP4-sFsQUQFB8FBwI26Qyu8D0yB60s_m7T7zhZ1ltdHXnbumxw-KZ2mOK_mADX5B9A4sOmssu-QJsz6vQJjKvS63PMaR5Z4gboZgrsY50Z1NOIA4h1omA8tCip5J6d0gSHn4dCuUUZH7igdl_6zwf8rrkwj4nGmOCcImk6iy2Yr5GfAbz_rPEBCbet8SUo40l4snXa5tRMiq_d"}')`,
-            }}
-          ></div>
+        <div className="relative w-full aspect-video bg-slate-200 dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm group flex items-center justify-center">
+          {assetImageUrl ? (
+            <img
+              src={assetImageUrl}
+              alt={asset?.name ?? 'Asset'}
+              className="w-full h-full object-contain"
+              onError={() => setAssetImageUrl(null)}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <span className="material-symbols-outlined text-slate-500 dark:text-slate-400 text-4xl">photo</span>
+            </div>
+          )}
           <div className={`absolute top-3 right-3 text-[10px] font-bold px-2 py-1 rounded-full uppercase tracking-wider ${statusPill.className}`}>
             {statusPill.label}
           </div>

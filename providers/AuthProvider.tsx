@@ -1,11 +1,12 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { getAccessToken, clearAccessToken, clearRefreshToken, setAuthInvalidListener } from "../lib/auth";
-import { getMe, login, type LoginProvider, type User } from "../lib/api";
+import { biometricLoginGetCredentials, clearAccessToken, clearRefreshToken, getAccessToken, setAuthInvalidListener, setBiometricRefreshToken } from "../lib/auth";
+import { getMe, login, refreshWithToken, type LoginProvider, type User } from "../lib/api";
 
 type AuthContextValue = {
   isAuthenticated: boolean;
   user: User | null;
   login: (identifier: string, password: string, provider: LoginProvider) => Promise<void>;
+  biometricLogin: () => Promise<void>;
   refreshUser: () => Promise<User | null>;
   logout: () => void;
 };
@@ -40,6 +41,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const doLogin = async (identifier: string, password: string, provider: LoginProvider) => {
     const res = await login(identifier, password, provider);
     setUser(res.user);
+    if (res.user.username) {
+      await setBiometricRefreshToken({ username: res.user.username, refreshToken: res.refreshToken });
+    }
+  };
+
+  const biometricLogin = async (): Promise<void> => {
+    const creds = await biometricLoginGetCredentials();
+    if (!creds) throw new Error("Biometric login not available");
+    const refreshed = await refreshWithToken(creds.refreshToken);
+    await setBiometricRefreshToken({ username: creds.username, refreshToken: refreshed.refreshToken });
+    const me = await getMe();
+    setUser(me);
   };
 
   const refreshUser = async (): Promise<User | null> => {
@@ -58,6 +71,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setUser(null);
   };
 
-  const value = useMemo<AuthContextValue>(() => ({ isAuthenticated, user, login: doLogin, refreshUser, logout }), [isAuthenticated, user]);
+  const value = useMemo<AuthContextValue>(() => ({ isAuthenticated, user, login: doLogin, biometricLogin, refreshUser, logout }), [isAuthenticated, user]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

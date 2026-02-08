@@ -1,7 +1,82 @@
 import { getAccessToken, getRefreshToken, setAccessToken, setRefreshToken, clearAccessToken, clearRefreshToken, notifyAuthInvalid } from "./auth";
 
 const defaultApiBaseUrl = import.meta.env.PROD ? "" : "http://localhost:3001";
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? defaultApiBaseUrl).replace(/\/$/, "");
+const fallbackApiBaseUrl = ((import.meta.env.VITE_API_FALLBACK_BASE_URL ?? import.meta.env.VITE_API_BASE_URL) ?? defaultApiBaseUrl).replace(/\/+$/, "");
+const defaultDiscoveryUrl = "https://gist.githubusercontent.com/widjis/3c055fff630cac02469d2ad505407a11/raw/ngrok.json";
+const discoveryUrl = (((import.meta.env.VITE_DISCOVERY_URL as string | undefined) ?? "").trim() || defaultDiscoveryUrl).trim();
+const requestTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? "15000");
+const discoveryTimeoutMs = Number(import.meta.env.VITE_API_DISCOVERY_TIMEOUT_MS ?? "4000");
+const discoveryRefreshMs = Number(import.meta.env.VITE_API_DISCOVERY_REFRESH_MS ?? "60000");
+
+let primaryApiBase: string | null = null;
+let preferFallback = false;
+let lastDiscoveryAttempt = 0;
+
+const normalizeBase = (base: string): string => base.replace(/\/+$/, "");
+
+export const API_BASE_URL = fallbackApiBaseUrl;
+
+const getApiBase = (): string => {
+  if (preferFallback || !primaryApiBase) return fallbackApiBaseUrl;
+  return primaryApiBase;
+};
+
+const fetchWithTimeout = async (url: string, init: RequestInit, timeoutMs: number): Promise<Response> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...(init ?? {}), signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const loadDiscovery = async (): Promise<boolean> => {
+  if (!discoveryUrl) return false;
+  lastDiscoveryAttempt = Date.now();
+  const res = await fetchWithTimeout(discoveryUrl, { method: "GET", headers: { Accept: "application/json" } }, discoveryTimeoutMs);
+  if (!res.ok) return false;
+  const json = (await res.json()) as unknown;
+  const next =
+    typeof json === "object" && json !== null && "apiBaseUrl" in json && typeof (json as { apiBaseUrl?: unknown }).apiBaseUrl === "string"
+      ? (json as { apiBaseUrl: string }).apiBaseUrl
+      : "";
+  if (!next || !next.trim()) return false;
+  primaryApiBase = normalizeBase(next);
+  preferFallback = false;
+  return true;
+};
+
+const ensureDiscovery = async (): Promise<void> => {
+  if (!discoveryUrl) return;
+  const now = Date.now();
+  if (primaryApiBase && now - lastDiscoveryAttempt < discoveryRefreshMs) return;
+  try {
+    await loadDiscovery();
+  } catch {}
+};
+
+const shouldFallback = (res: Response): boolean => res.status === 502 || res.status === 503 || res.status === 504;
+
+const fetchWithFallback = async (path: string, init: RequestInit): Promise<Response> => {
+  await ensureDiscovery();
+  const base = getApiBase();
+  const url = `${base}${path}`;
+  try {
+    const res = await fetchWithTimeout(url, init, requestTimeoutMs);
+    if (shouldFallback(res) && base !== fallbackApiBaseUrl) {
+      preferFallback = true;
+      return fetchWithTimeout(`${fallbackApiBaseUrl}${path}`, init, requestTimeoutMs);
+    }
+    return res;
+  } catch {
+    if (base !== fallbackApiBaseUrl) {
+      preferFallback = true;
+      return fetchWithTimeout(`${fallbackApiBaseUrl}${path}`, init, requestTimeoutMs);
+    }
+    throw new Error("Network error");
+  }
+};
 
 export type LoginProvider = "ldap" | "local";
 
@@ -51,17 +126,20 @@ const parseError = async (res: Response): Promise<ApiError> => {
 };
 
 export const apiFetchJson = async <T>(path: string, init?: RequestInit): Promise<T> => {
-  const url = `${API_BASE_URL}${path}`;
-  const headers: Record<string, string> = { Accept: "application/json" };
-  const token = getAccessToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
   const hasBody = typeof init?.body !== "undefined" && init?.body !== null;
-  const contentHeaders = hasBody ? { "Content-Type": "application/json" } : {};
-  const res = await fetch(url, {
-    ...(init ?? {}),
-    headers: { ...contentHeaders, ...headers, ...(init?.headers as Record<string, string> | undefined) },
-    body: hasBody && typeof init?.body !== "string" ? JSON.stringify(init?.body) : init?.body,
-  });
+  const makeInit = (tokenValue?: string | null): RequestInit => {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const token = typeof tokenValue === "string" ? tokenValue : getAccessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const contentHeaders = hasBody ? { "Content-Type": "application/json" } : {};
+    return {
+      ...(init ?? {}),
+      headers: { ...contentHeaders, ...headers, ...(init?.headers as Record<string, string> | undefined) },
+      body: hasBody && typeof init?.body !== "string" ? JSON.stringify(init?.body) : init?.body,
+    };
+  };
+
+  const res = await fetchWithFallback(path, makeInit());
   if (res.status === 401) {
     const refreshed = await refresh();
     if (!refreshed) {
@@ -70,11 +148,7 @@ export const apiFetchJson = async <T>(path: string, init?: RequestInit): Promise
       notifyAuthInvalid();
       throw new ApiError(401, "Unauthorized");
     }
-    const retry = await fetch(url, {
-      ...(init ?? {}),
-      headers: { ...contentHeaders, ...headers, Authorization: `Bearer ${getAccessToken() ?? ""}`, ...(init?.headers as Record<string, string> | undefined) },
-      body: hasBody && typeof init?.body !== "string" ? JSON.stringify(init?.body) : init?.body,
-    });
+    const retry = await fetchWithFallback(path, makeInit(getAccessToken() ?? ""));
     if (!retry.ok) throw await parseError(retry);
     return (await retry.json()) as T;
   }
@@ -83,15 +157,14 @@ export const apiFetchJson = async <T>(path: string, init?: RequestInit): Promise
 };
 
 const apiFetchWithAuthRetry = async (path: string, init?: RequestInit): Promise<Response> => {
-  const url = `${API_BASE_URL}${path}`;
-  const headers: Record<string, string> = { Accept: "application/json" };
-  const token = getAccessToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const makeInit = (tokenValue?: string | null): RequestInit => {
+    const headers: Record<string, string> = { Accept: "application/json" };
+    const token = typeof tokenValue === "string" ? tokenValue : getAccessToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+    return { ...(init ?? {}), headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) } };
+  };
 
-  const res = await fetch(url, {
-    ...(init ?? {}),
-    headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) },
-  });
+  const res = await fetchWithFallback(path, makeInit());
 
   if (res.status !== 401) return res;
 
@@ -103,10 +176,7 @@ const apiFetchWithAuthRetry = async (path: string, init?: RequestInit): Promise<
     return res;
   }
 
-  return fetch(url, {
-    ...(init ?? {}),
-    headers: { ...headers, Authorization: `Bearer ${getAccessToken() ?? ""}`, ...(init?.headers as Record<string, string> | undefined) },
-  });
+  return fetchWithFallback(path, makeInit(getAccessToken() ?? ""));
 };
 
 export const apiGet = async <T>(path: string): Promise<T> => {
@@ -132,6 +202,13 @@ export const refresh = async (): Promise<boolean> => {
   setAccessToken(json.accessToken);
   setRefreshToken(json.refreshToken);
   return true;
+};
+
+export const refreshWithToken = async (refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> => {
+  const json = await apiPost<{ accessToken: string; refreshToken: string }>(`/api/auth/refresh`, { refreshToken });
+  setAccessToken(json.accessToken);
+  setRefreshToken(json.refreshToken);
+  return json;
 };
 
 export const getMe = async (): Promise<User> => {
@@ -192,6 +269,16 @@ export const apiListAssets = async (input: {
   if (input.pageSize) params.set("pageSize", String(input.pageSize));
   const query = params.toString();
   return apiGet<ListAssetsResponse>(`/api/assets${query ? `?${query}` : ""}`);
+};
+
+export const apiFindAssetIdByTag = async (assetTag: string): Promise<string | null> => {
+  const normalized = assetTag.trim();
+  if (!normalized) return null;
+  const res = await apiListAssets({ search: normalized, page: 1, pageSize: 20 });
+  const exact = res.items.find((a) => a.assetTag.trim().toLowerCase() === normalized.toLowerCase());
+  if (exact) return exact.id;
+  if (res.items.length === 1) return res.items[0].id;
+  return null;
 };
 
 export const apiGetAsset = async (assetId: string): Promise<Asset> => {
@@ -470,6 +557,9 @@ export type TaskDetail = {
   rejectedAt: string | null;
   rejectedBy: TaskUserRef | null;
   rejectionReason: string | null;
+  revisedAt: string | null;
+  revisedBy: TaskUserRef | null;
+  revisionNote: string | null;
   asset: { id: string; assetTag: string; name: string };
   facility: { id: string; name: string | null } | null;
   template: { id: string; name: string };

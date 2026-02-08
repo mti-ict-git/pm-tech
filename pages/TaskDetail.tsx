@@ -44,6 +44,11 @@ const TaskDetail: React.FC = () => {
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewFileName, setPreviewFileName] = useState<string | null>(null);
+  const [previewContentType, setPreviewContentType] = useState<string | null>(null);
   const checklistUploadItemIdRef = useRef<string | null>(null);
   const checklistFileInputRef = useRef<HTMLInputElement | null>(null);
   const taskFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -112,6 +117,12 @@ const TaskDetail: React.FC = () => {
     setChecklistDraft(next);
   }, [task?.id]);
 
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   const formatDueAt = (value: string): string => {
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return value;
@@ -141,6 +152,14 @@ const TaskDetail: React.FC = () => {
     return `${size.toFixed(decimals)} ${units[i]}`;
   };
 
+  const closePreview = (): void => {
+    setPreviewOpen(false);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    setPreviewFileName(null);
+    setPreviewContentType(null);
+  };
+
   const openChecklistEvidence = async (e: TaskChecklistEvidence): Promise<void> => {
     const isInternal = e.uri === 'imported' || e.uri === 'stored' || e.uri === 'uploaded';
     if (!isInternal) {
@@ -151,19 +170,26 @@ const TaskDetail: React.FC = () => {
 
     setOpeningEvidenceId(e.id);
     setError(null);
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    setPreviewFileName(e.fileName);
+    setPreviewContentType(e.contentType ?? null);
+    setPreviewUrl(null);
     try {
       const downloaded = await apiDownloadChecklistEvidence({ checklistEvidenceId: e.id });
-      const preferredType = downloaded.contentType ?? downloaded.blob.type;
+      const preferredType = downloaded.contentType ?? e.contentType ?? downloaded.blob.type;
       const blob = preferredType && downloaded.blob.type !== preferredType ? new Blob([downloaded.blob], { type: preferredType }) : downloaded.blob;
       const url = URL.createObjectURL(blob);
-      const opened = window.open(url, '_blank', 'noreferrer');
-      if (!opened) window.location.assign(url);
-      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setPreviewUrl(url);
+      setPreviewFileName((prev) => prev ?? downloaded.fileName);
+      setPreviewContentType((prev) => prev ?? preferredType ?? downloaded.contentType);
     } catch (err) {
+      closePreview();
       const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to open attachment';
       setError(message);
     } finally {
       setOpeningEvidenceId(null);
+      setPreviewLoading(false);
     }
   };
 
@@ -185,7 +211,10 @@ const TaskDetail: React.FC = () => {
   const roles = user?.roles ?? [];
   const isSuperadmin = roles.includes('Superadmin');
   const isManager = roles.includes('Supervisor') || roles.includes('Admin') || roles.includes('Superadmin');
-  const canEditChecklist = (!isApprovalLocked || (isSuperadmin && approvalStatus !== 'Approved')) && statusLower !== 'completed' && statusLower !== 'cancelled';
+  const canEditChecklist =
+    ((!isManager && !isApprovalLocked) || (isSuperadmin && approvalStatus === 'PendingSuperadmin')) &&
+    statusLower !== 'completed' &&
+    statusLower !== 'cancelled';
   const canStart = statusLower === 'open';
   const canPause = statusLower === 'in_progress';
   const canResume = statusLower === 'paused';
@@ -200,7 +229,7 @@ const TaskDetail: React.FC = () => {
     return false;
   }, [approvalStatus, roles]);
 
-  const canSubmitForApproval = Boolean(task) && !isManager && !isApprovalLocked && approvalStatus !== 'Rejected' && statusLower !== 'completed' && statusLower !== 'cancelled';
+  const canSubmitForApproval = Boolean(task) && !isManager && !isApprovalLocked && statusLower !== 'completed' && statusLower !== 'cancelled';
 
   const onApprove = async (): Promise<void> => {
     if (!task) return;
@@ -497,6 +526,32 @@ const TaskDetail: React.FC = () => {
             </div>
           </section>
         )}
+        {task.approvalStatus === 'Rejected' ? (
+          <section className="px-4 pt-4">
+            <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl border border-rose-200 dark:border-rose-900 p-3">
+              <p className="text-xs font-semibold text-rose-700 dark:text-rose-300 uppercase tracking-wider">Rejected</p>
+              <p className="mt-1 text-sm text-rose-900 dark:text-rose-100">{task.rejectionReason ?? 'No reason provided.'}</p>
+              {task.rejectedAt ? (
+                <p className="mt-2 text-xs text-rose-700/80 dark:text-rose-200/80">
+                  {task.rejectedBy?.displayName ?? task.rejectedBy?.username ?? 'Reviewer'} • {formatDueAt(task.rejectedAt)}
+                </p>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+        {task.revisionNote ? (
+          <section className="px-4 pt-4">
+            <div className="bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-900 p-3">
+              <p className="text-xs font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wider">Correction Note</p>
+              <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">{task.revisionNote}</p>
+              {task.revisedAt ? (
+                <p className="mt-2 text-xs text-amber-700/80 dark:text-amber-200/80">
+                  {task.revisedBy?.displayName ?? task.revisedBy?.username ?? 'Reviewer'} • {formatDueAt(task.revisedAt)}
+                </p>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
         <section className="p-4">
           <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
             <div className="relative h-48 w-full bg-white dark:bg-white">
@@ -689,6 +744,61 @@ const TaskDetail: React.FC = () => {
         </section>
       </main>
 
+      {previewOpen ? (
+        <div className="fixed inset-0 z-[70]">
+          <button
+            type="button"
+            aria-label="Close preview"
+            onClick={closePreview}
+            className="absolute inset-0 bg-black/60"
+          />
+          <div className="absolute inset-x-0 bottom-0 max-h-[85vh] bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-4 pb-8">
+            <div className="max-w-screen-sm mx-auto space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Attachment</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{previewFileName ?? 'Preview'}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={closePreview}
+                  className="size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center"
+                  aria-label="Close"
+                >
+                  <span className="material-symbols-outlined text-slate-600 dark:text-slate-300">close</span>
+                </button>
+              </div>
+              <div className="bg-slate-100 dark:bg-slate-800 rounded-xl p-3">
+                {previewLoading ? (
+                  <div className="h-64 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">Loading…</div>
+                ) : !previewUrl ? (
+                  <div className="h-64 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">Preview not available.</div>
+                ) : (previewContentType ?? '').includes('pdf') || (previewFileName ?? '').toLowerCase().endsWith('.pdf') ? (
+                  <iframe title={previewFileName ?? 'Preview'} src={previewUrl} className="w-full h-64 rounded-lg bg-white" />
+                ) : (previewContentType ?? '').startsWith('image/') || (previewFileName ?? '').toLowerCase().match(/\.(png|jpg|jpeg)$/) ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <img src={previewUrl} alt={previewFileName ?? 'Attachment'} className="max-h-64 max-w-full object-contain" />
+                  </div>
+                ) : (previewContentType ?? '').startsWith('video/') || (previewFileName ?? '').toLowerCase().match(/\.(mp4|mov|m4v)$/) ? (
+                  <div className="h-64 flex items-center justify-center">
+                    <video src={previewUrl} controls className="max-h-64 max-w-full rounded-lg" />
+                  </div>
+                ) : (previewContentType ?? '').startsWith('audio/') || (previewFileName ?? '').toLowerCase().match(/\.(mp3|wav|m4a)$/) ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate w-full text-center">
+                      {previewFileName ?? 'Audio'}
+                    </div>
+                    <audio src={previewUrl} controls className="w-full" />
+                  </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">Preview not available.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {rejectOpen ? (
         <div className="fixed inset-0 z-[60]">
           <button
@@ -837,7 +947,7 @@ const TaskDetail: React.FC = () => {
           <div className="max-w-screen-sm mx-auto">
             {canReview ? (
               <div className="grid grid-cols-12 gap-3">
-                {isSuperadmin && approvalStatus !== 'Approved' ? (
+                {isSuperadmin && approvalStatus === 'PendingSuperadmin' ? (
                   <button
                     type="button"
                     disabled={actionLoading}
@@ -851,7 +961,7 @@ const TaskDetail: React.FC = () => {
                   type="button"
                   disabled={approvalActionLoading}
                   onClick={() => setReviseOpen(true)}
-                  className={`${isSuperadmin && approvalStatus !== 'Approved' ? 'col-span-4' : 'col-span-6'} h-12 rounded-xl border border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300 font-bold`}
+                  className={`${isSuperadmin && approvalStatus === 'PendingSuperadmin' ? 'col-span-4' : 'col-span-6'} h-12 rounded-xl border border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300 font-bold`}
                 >
                   Revise
                 </button>
@@ -859,7 +969,7 @@ const TaskDetail: React.FC = () => {
                   type="button"
                   disabled={approvalActionLoading}
                   onClick={() => setRejectOpen(true)}
-                  className={`${isSuperadmin && approvalStatus !== 'Approved' ? 'col-span-4' : 'col-span-6'} h-12 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-300 font-bold`}
+                  className={`${isSuperadmin && approvalStatus === 'PendingSuperadmin' ? 'col-span-4' : 'col-span-6'} h-12 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-300 font-bold`}
                 >
                   Reject
                 </button>

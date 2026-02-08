@@ -25,3 +25,24 @@ View your app in AI Studio: https://ai.studio/apps/drive/1CobEZxXeyTrGD39Ld8JWef
 - Facilities list with search and location filters
 - View checklist evidence attachments from PM history tasks
 - Supervisors can run PM Now from Asset Detail
+
+## Android (Capacitor)
+
+Quick start:
+`npm run build:android`
+
+1. Install dependencies:
+   `npm install`
+2. Build web bundle:
+   `npm run build`
+3. Add Android platform (first time only):
+   `npx cap add android`
+4. Sync changes to Android:
+   `npx cap sync android`
+5. Open Android Studio:
+   `npx cap open android`
+
+## Biometric Login
+
+- Sign in once with username/password to save a refresh token securely on device.
+- Tap Biometric on the login screen to unlock and sign in.

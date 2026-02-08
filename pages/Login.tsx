@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../providers/AuthProvider';
 import type { LoginProvider } from '../lib/api';
+import { isBiometricAvailable } from '../lib/auth';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, biometricLogin } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -13,10 +14,12 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState("");
   const [provider, setProvider] = useState<LoginProvider>("ldap");
   const [error, setError] = useState<string | null>(null);
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
 
   // Optional: Clear auth on mount if we want to force login every time user hits /
   useEffect(() => {
     const rafId = requestAnimationFrame(() => setMounted(true));
+    void isBiometricAvailable().then(setBiometricAvailable);
     return () => cancelAnimationFrame(rafId);
     // Check if we are already logged in to prevent showing login page unnecessarily
     // if the user navigated here manually but has a session.
@@ -40,6 +43,19 @@ const Login: React.FC = () => {
 
   const handleOfflineAccess = () => {
     navigate('/offline');
+  };
+
+  const handleBiometricLogin = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await biometricLogin();
+      navigate('/dashboard');
+    } catch {
+      setError('Biometric login unavailable');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -131,7 +147,9 @@ const Login: React.FC = () => {
             </button>
             <button 
               type="button" 
-              className="w-[80px] rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center gap-0.5 active:bg-slate-50 dark:active:bg-slate-800 transition-colors hover:border-slate-300 dark:hover:border-slate-600"
+              onClick={handleBiometricLogin}
+              disabled={loading || !biometricAvailable}
+              className="w-[80px] rounded-2xl border border-slate-200 dark:border-slate-700 flex flex-col items-center justify-center gap-0.5 active:bg-slate-50 dark:active:bg-slate-800 transition-colors hover:border-slate-300 dark:hover:border-slate-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <span className="material-symbols-outlined text-slate-600 dark:text-slate-300 text-[28px]">fingerprint</span>
               <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tight">Biometric</span>

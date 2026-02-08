@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MTI Mobile PM</string>
+    <string name="title_activity_main">MTI Mobile PM</string>
+    <string name="package_name">com.merdekatsingshan.pmtech</string>
+    <string name="custom_url_scheme">com.merdekatsingshan.pmtech</string>
+</resources>

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiGetDashboardOverview, apiListApprovalInbox, getMe, type ApprovalInboxItem, type ApprovalInboxStage, type DashboardOverview, type User } from '../lib/api';
+import { apiFindAssetIdByTag, apiGetDashboardOverview, apiListApprovalInbox, getMe, type ApprovalInboxItem, type ApprovalInboxStage, type DashboardOverview, type User } from '../lib/api';
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
@@ -13,6 +13,9 @@ const Home: React.FC = () => {
   const [approvals, setApprovals] = useState<ApprovalInboxItem[]>([]);
   const [approvalsLoading, setApprovalsLoading] = useState(false);
   const [approvalsError, setApprovalsError] = useState<string | null>(null);
+
+  const [scanSupported, setScanSupported] = useState(false);
+  const [scanLoading, setScanLoading] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -30,6 +33,72 @@ const Home: React.FC = () => {
     };
     void load();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const load = async (): Promise<void> => {
+      try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (!Capacitor.isNativePlatform()) {
+          if (active) setScanSupported(false);
+          return;
+        }
+        const { BarcodeScanner } = await import('@capacitor-mlkit/barcode-scanning');
+        const { supported } = await BarcodeScanner.isSupported();
+        if (active) setScanSupported(Boolean(supported));
+      } catch {
+        if (active) setScanSupported(false);
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const onScanQr = async (): Promise<void> => {
+    setScanLoading(true);
+    setError(null);
+    try {
+      const { Capacitor } = await import('@capacitor/core');
+      if (!Capacitor.isNativePlatform()) {
+        setError('QR scan is only available on Android app');
+        return;
+      }
+
+      const { BarcodeScanner, BarcodeFormat } = await import('@capacitor-mlkit/barcode-scanning');
+      const { supported } = await BarcodeScanner.isSupported();
+      if (!supported) {
+        setError('QR scan is not supported on this device');
+        return;
+      }
+
+      const perms = await BarcodeScanner.requestPermissions();
+      if (perms.camera !== 'granted' && perms.camera !== 'limited') {
+        setError('Camera permission is required to scan QR');
+        return;
+      }
+
+      const res = await BarcodeScanner.scan({ formats: [BarcodeFormat.QrCode] });
+      const first = res.barcodes[0];
+      const tag = first?.rawValue?.trim() ?? '';
+      if (!tag) {
+        setError('No QR detected');
+        return;
+      }
+
+      const assetId = await apiFindAssetIdByTag(tag);
+      if (!assetId) {
+        setError(`Asset not found for tag: ${tag}`);
+        return;
+      }
+      navigate(`/asset/${assetId}`);
+    } catch {
+      setError('Failed to scan QR');
+    } finally {
+      setScanLoading(false);
+    }
+  };
 
   const approvalsStage = useMemo<ApprovalInboxStage | null>(() => {
     const roles = user?.roles ?? [];
@@ -317,9 +386,14 @@ const Home: React.FC = () => {
         <section>
           <h2 className="text-slate-900 dark:text-white font-bold text-lg mb-4">Quick Actions</h2>
           <div className="grid grid-cols-2 gap-3">
-            <button className="flex items-center gap-3 p-4 bg-primary text-white rounded-xl shadow-md active:scale-95 transition-transform">
+            <button
+              type="button"
+              onClick={() => void onScanQr()}
+              disabled={!scanSupported || scanLoading}
+              className="flex items-center gap-3 p-4 bg-primary text-white rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
+            >
               <span className="material-symbols-outlined">qr_code_scanner</span>
-              <span className="font-semibold">Scan QR</span>
+              <span className="font-semibold">{scanLoading ? 'Scanning…' : 'Scan QR'}</span>
             </button>
             <button onClick={() => navigate('/tasks')} className="flex items-center gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm active:scale-95 transition-transform">
               <span className="material-symbols-outlined text-primary">assignment_turned_in</span>
