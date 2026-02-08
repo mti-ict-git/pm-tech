@@ -1,6 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ApiError, apiGetTask, apiListTasks, getOfflineCacheLastWriteAt, type TaskDetail } from '../lib/api';
+import {
+  ApiError,
+  apiGetTask,
+  apiListTasks,
+  clearSyncConflicts,
+  getPendingEvidenceCount,
+  getPendingMutationCount,
+  getOfflineCacheLastWriteAt,
+  getSyncConflictCount,
+  processOfflineSync,
+  type TaskDetail,
+} from '../lib/api';
 
 type CachedTask = {
   id: string;
@@ -18,6 +29,12 @@ const Offline: React.FC = () => {
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastWriteAt, setLastWriteAt] = useState<string | null>(() => getOfflineCacheLastWriteAt());
+  const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  const pendingMutations = useMemo(() => getPendingMutationCount(), [syncing, online, lastWriteAt, refreshTick]);
+  const pendingEvidence = useMemo(() => getPendingEvidenceCount(), [syncing, online, lastWriteAt, refreshTick]);
+  const conflictCount = useMemo(() => getSyncConflictCount(), [syncing, online, lastWriteAt, refreshTick]);
 
   useEffect(() => {
     const onOnline = (): void => setOnline(true);
@@ -75,12 +92,18 @@ const Offline: React.FC = () => {
     }
     setSyncing(true);
     setError(null);
+    setLastSyncSummary(null);
     try {
+      const syncRes = await processOfflineSync();
+      setLastSyncSummary(
+        `Synced ${syncRes.mutations.processed} action(s) and ${syncRes.evidence.processed} attachment(s).`,
+      );
       const list = await apiListTasks({ assigned: 'me', maintenanceType: 'all', page: 1, pageSize: 50 });
       const ids = (list.items ?? []).map((i) => i.id).filter((id) => typeof id === 'string' && id.trim());
       const unique = Array.from(new Set(ids)).slice(0, 20);
       await Promise.all(unique.map((id) => apiGetTask(id)));
       setLastWriteAt(getOfflineCacheLastWriteAt());
+      setRefreshTick((v) => v + 1);
     } catch (e) {
       const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Sync failed';
       setError(message);
@@ -118,6 +141,15 @@ const Offline: React.FC = () => {
             <p className="text-slate-500 dark:text-slate-400 text-sm mb-2">
               {lastWriteAt ? `Last sync: ${formatWhen(lastWriteAt)}` : 'No cached data yet'}
             </p>
+            {lastSyncSummary ? <p className="text-slate-600 dark:text-slate-300 text-sm mb-2">{lastSyncSummary}</p> : null}
+            <div className="w-full flex items-center justify-between text-xs text-slate-600 dark:text-slate-300 mb-2">
+              <span>
+                Pending: {pendingMutations} action(s), {pendingEvidence} attachment(s)
+              </span>
+              <span className={conflictCount > 0 ? 'text-rose-600 dark:text-rose-300' : ''}>
+                Conflicts: {conflictCount}
+              </span>
+            </div>
             {error ? <p className="text-rose-600 dark:text-rose-300 text-sm mb-4">{error}</p> : <div className="h-4" />}
             <button
               disabled={!online || syncing}
@@ -127,6 +159,20 @@ const Offline: React.FC = () => {
               <span className="material-symbols-outlined text-xl">sync</span>
               {syncing ? 'Syncing…' : 'Sync now'}
             </button>
+
+            {conflictCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  clearSyncConflicts();
+                  setLastWriteAt(getOfflineCacheLastWriteAt());
+                  setRefreshTick((v) => v + 1);
+                }}
+                className="mt-3 w-full bg-white dark:bg-slate-950 text-slate-700 dark:text-slate-200 font-semibold py-3 px-6 rounded-lg border border-slate-200 dark:border-slate-800"
+              >
+                Clear conflicts
+              </button>
+            ) : null}
           </div>
         </div>
 

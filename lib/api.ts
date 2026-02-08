@@ -38,29 +38,34 @@ const readMutationQueue = (): MutationQueueItem[] => {
     const out: MutationQueueItem[] = [];
     for (const v of parsed) {
       if (!isRecord(v)) continue;
-      const id = v.id;
-      const method = v.method;
-      const path = v.path;
-      const body = v.body;
-      const createdAt = v.createdAt;
-      const attemptCount = v.attemptCount;
-      const lastAttemptAt = v.lastAttemptAt;
-      const lastError = v.lastError;
-      if (typeof id !== "string" || !id.trim()) continue;
-      if (method !== "POST") continue;
-      if (typeof path !== "string" || !path.startsWith("/api/")) continue;
-      if (body !== null && typeof body !== "string") continue;
-      if (typeof createdAt !== "string" || !createdAt.trim()) continue;
-      if (typeof attemptCount !== "number" || !Number.isFinite(attemptCount) || attemptCount < 0) continue;
-      if (lastAttemptAt !== null && typeof lastAttemptAt !== "string") continue;
-      if (lastError !== null && typeof lastError !== "string") continue;
+      const idRaw = v.id;
+      const methodRaw = v.method;
+      const pathRaw = v.path;
+      const bodyRaw = v.body;
+      const createdAtRaw = v.createdAt;
+      const attemptCountRaw = v.attemptCount;
+      const lastAttemptAtRaw = v.lastAttemptAt;
+      const lastErrorRaw = v.lastError;
+
+      if (typeof idRaw !== "string" || !idRaw.trim()) continue;
+      if (typeof methodRaw !== "string" || methodRaw !== "POST") continue;
+      if (typeof pathRaw !== "string" || !pathRaw.startsWith("/api/")) continue;
+      const body = bodyRaw === null || bodyRaw === undefined ? null : typeof bodyRaw === "string" ? bodyRaw : null;
+      if (bodyRaw !== null && bodyRaw !== undefined && typeof bodyRaw !== "string") continue;
+      if (typeof createdAtRaw !== "string" || !createdAtRaw.trim()) continue;
+      if (typeof attemptCountRaw !== "number" || !Number.isFinite(attemptCountRaw) || attemptCountRaw < 0) continue;
+      const lastAttemptAt = typeof lastAttemptAtRaw === "string" && lastAttemptAtRaw.trim() ? lastAttemptAtRaw : null;
+      if (lastAttemptAtRaw !== null && lastAttemptAtRaw !== undefined && typeof lastAttemptAtRaw !== "string") continue;
+      const lastError = typeof lastErrorRaw === "string" && lastErrorRaw.trim() ? lastErrorRaw : null;
+      if (lastErrorRaw !== null && lastErrorRaw !== undefined && typeof lastErrorRaw !== "string") continue;
+
       out.push({
-        id,
-        method,
-        path,
+        id: idRaw,
+        method: "POST",
+        path: pathRaw,
         body,
-        createdAt,
-        attemptCount,
+        createdAt: createdAtRaw,
+        attemptCount: attemptCountRaw,
         lastAttemptAt,
         lastError,
       });
@@ -119,14 +124,23 @@ export const processMutationQueue = async (): Promise<{ processed: number; faile
       await apiFetchJson<unknown>(item.path, { method: item.method, body: item.body ?? undefined });
       processed += 1;
     } catch (e) {
+      if (e instanceof ApiError && isNonRetryableSyncError(e.status)) {
+        failed += 1;
+        appendSyncConflict({
+          kind: "mutation",
+          queueId: item.id,
+          path: item.path,
+          createdAt: item.createdAt,
+          detectedAt: attemptAt,
+          status: e.status,
+          message: e.message,
+        });
+        continue;
+      }
+
       const errMessage = e instanceof ApiError ? `${e.status}: ${e.message}` : e instanceof Error ? e.message : "Sync failed";
       failed += 1;
-      remaining.push({
-        ...item,
-        attemptCount: item.attemptCount + 1,
-        lastAttemptAt: attemptAt,
-        lastError: errMessage,
-      });
+      remaining.push({ ...item, attemptCount: item.attemptCount + 1, lastAttemptAt: attemptAt, lastError: errMessage });
     }
   }
   writeMutationQueue(remaining);
@@ -162,37 +176,45 @@ const readEvidenceOutboxMeta = (): EvidenceOutboxMeta[] => {
     const out: EvidenceOutboxMeta[] = [];
     for (const v of parsed) {
       if (!isRecord(v)) continue;
-      const id = v.id;
-      const kind = v.kind;
-      const taskId = v.taskId;
-      const templateChecklistItemId = v.templateChecklistItemId;
-      const fileName = v.fileName;
-      const contentType = v.contentType;
-      const sizeBytes = v.sizeBytes;
-      const createdAt = v.createdAt;
-      const lastAttemptAt = v.lastAttemptAt;
-      const lastError = v.lastError;
-      if (typeof id !== "string" || !id.trim()) continue;
-      if (kind !== "task" && kind !== "checklist") continue;
-      if (typeof taskId !== "string" || !taskId.trim()) continue;
-      if (templateChecklistItemId !== null && typeof templateChecklistItemId !== "string") continue;
-      if (typeof fileName !== "string" || !fileName.trim()) continue;
-      if (typeof contentType !== "string") continue;
-      if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes < 0) continue;
-      if (typeof createdAt !== "string" || !createdAt.trim()) continue;
-      if (lastAttemptAt !== null && typeof lastAttemptAt !== "string") continue;
-      if (lastError !== null && typeof lastError !== "string") continue;
+      const idRaw = v.id;
+      const kindRaw = v.kind;
+      const taskIdRaw = v.taskId;
+      const templateChecklistItemIdRaw = v.templateChecklistItemId;
+      const fileNameRaw = v.fileName;
+      const contentTypeRaw = v.contentType;
+      const sizeBytesRaw = v.sizeBytes;
+      const createdAtRaw = v.createdAt;
+      const lastAttemptAtRaw = v.lastAttemptAt;
+      const lastErrorRaw = v.lastError;
+
+      if (typeof idRaw !== "string" || !idRaw.trim()) continue;
+      if (kindRaw !== "task" && kindRaw !== "checklist") continue;
+      if (typeof taskIdRaw !== "string" || !taskIdRaw.trim()) continue;
+      const templateChecklistItemId =
+        typeof templateChecklistItemIdRaw === "string" && templateChecklistItemIdRaw.trim() ? templateChecklistItemIdRaw : null;
+      if (templateChecklistItemIdRaw !== null && templateChecklistItemIdRaw !== undefined && typeof templateChecklistItemIdRaw !== "string") {
+        continue;
+      }
+      if (typeof fileNameRaw !== "string" || !fileNameRaw.trim()) continue;
+      if (typeof contentTypeRaw !== "string") continue;
+      if (typeof sizeBytesRaw !== "number" || !Number.isFinite(sizeBytesRaw) || sizeBytesRaw < 0) continue;
+      if (typeof createdAtRaw !== "string" || !createdAtRaw.trim()) continue;
+      const lastAttemptAt = typeof lastAttemptAtRaw === "string" && lastAttemptAtRaw.trim() ? lastAttemptAtRaw : null;
+      if (lastAttemptAtRaw !== null && lastAttemptAtRaw !== undefined && typeof lastAttemptAtRaw !== "string") continue;
+      const lastError = typeof lastErrorRaw === "string" && lastErrorRaw.trim() ? lastErrorRaw : null;
+      if (lastErrorRaw !== null && lastErrorRaw !== undefined && typeof lastErrorRaw !== "string") continue;
+
       out.push({
-        id,
-        kind,
-        taskId,
-        templateChecklistItemId: templateChecklistItemId ?? null,
-        fileName,
-        contentType,
-        sizeBytes,
-        createdAt,
-        lastAttemptAt: lastAttemptAt ?? null,
-        lastError: lastError ?? null,
+        id: idRaw,
+        kind: kindRaw,
+        taskId: taskIdRaw,
+        templateChecklistItemId,
+        fileName: fileNameRaw,
+        contentType: contentTypeRaw,
+        sizeBytes: sizeBytesRaw,
+        createdAt: createdAtRaw,
+        lastAttemptAt,
+        lastError,
       });
     }
     return out;
@@ -338,6 +360,21 @@ export const processEvidenceOutbox = async (): Promise<{ processed: number; fail
       await idbDeleteEvidence(meta.id);
       processed += 1;
     } catch (e) {
+      if (e instanceof ApiError && isNonRetryableSyncError(e.status)) {
+        failed += 1;
+        appendSyncConflict({
+          kind: "evidence",
+          queueId: meta.id,
+          path: meta.kind === "task" ? `/api/tasks/${meta.taskId}/evidence/upload` : `/api/tasks/${meta.taskId}/checklist-items/${meta.templateChecklistItemId ?? ""}/evidence/upload`,
+          createdAt: meta.createdAt,
+          detectedAt: attemptAt,
+          status: e.status,
+          message: e.message,
+        });
+        await idbDeleteEvidence(meta.id);
+        continue;
+      }
+
       const errMessage = e instanceof ApiError ? `${e.status}: ${e.message}` : e instanceof Error ? e.message : "Upload failed";
       failed += 1;
       remaining.push({ ...meta, lastAttemptAt: attemptAt, lastError: errMessage });
@@ -351,6 +388,111 @@ export const processEvidenceOutbox = async (): Promise<{ processed: number; fail
 type CacheEntry<T> = { savedAt: string; value: T };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+const syncConflictsKey = "pmtech.syncConflicts.v1";
+
+export type SyncConflict = {
+  id: string;
+  kind: "mutation" | "evidence";
+  queueId: string;
+  path: string;
+  taskId: string | null;
+  createdAt: string;
+  detectedAt: string;
+  status: number;
+  message: string;
+};
+
+const extractTaskIdFromPath = (path: string): string | null => {
+  const match = /^\/api\/tasks\/([^/]+)\//.exec(path);
+  const taskId = match?.[1];
+  return typeof taskId === "string" && taskId.trim() ? taskId : null;
+};
+
+const readSyncConflicts = (): SyncConflict[] => {
+  try {
+    const raw = localStorage.getItem(syncConflictsKey);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: SyncConflict[] = [];
+    for (const v of parsed) {
+      if (!isRecord(v)) continue;
+      const idRaw = v.id;
+      const kindRaw = v.kind;
+      const queueIdRaw = v.queueId;
+      const pathRaw = v.path;
+      const taskIdRaw = v.taskId;
+      const createdAtRaw = v.createdAt;
+      const detectedAtRaw = v.detectedAt;
+      const statusRaw = v.status;
+      const messageRaw = v.message;
+
+      if (typeof idRaw !== "string" || !idRaw.trim()) continue;
+      if (kindRaw !== "mutation" && kindRaw !== "evidence") continue;
+      if (typeof queueIdRaw !== "string" || !queueIdRaw.trim()) continue;
+      if (typeof pathRaw !== "string" || !pathRaw.trim()) continue;
+      const taskId = typeof taskIdRaw === "string" && taskIdRaw.trim() ? taskIdRaw : null;
+      if (taskIdRaw !== null && taskIdRaw !== undefined && typeof taskIdRaw !== "string") continue;
+      if (typeof createdAtRaw !== "string" || !createdAtRaw.trim()) continue;
+      if (typeof detectedAtRaw !== "string" || !detectedAtRaw.trim()) continue;
+      if (typeof statusRaw !== "number" || !Number.isFinite(statusRaw)) continue;
+      if (typeof messageRaw !== "string") continue;
+
+      out.push({
+        id: idRaw,
+        kind: kindRaw,
+        queueId: queueIdRaw,
+        path: pathRaw,
+        taskId,
+        createdAt: createdAtRaw,
+        detectedAt: detectedAtRaw,
+        status: statusRaw,
+        message: messageRaw,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+};
+
+const writeSyncConflicts = (items: SyncConflict[]): void => {
+  try {
+    localStorage.setItem(syncConflictsKey, JSON.stringify(items));
+  } catch {
+    return;
+  }
+};
+
+export const listSyncConflicts = (): SyncConflict[] => readSyncConflicts();
+
+export const clearSyncConflicts = (): void => {
+  try {
+    localStorage.removeItem(syncConflictsKey);
+  } catch {
+    return;
+  }
+};
+
+export const getSyncConflictCount = (): number => readSyncConflicts().length;
+
+export const getSyncConflictCountForTask = (taskId: string): number => {
+  const normalized = taskId.trim();
+  if (!normalized) return 0;
+  return readSyncConflicts().filter((c) => c.taskId === normalized).length;
+};
+
+const appendSyncConflict = (input: Omit<SyncConflict, "id" | "taskId">): void => {
+  const item: SyncConflict = { ...input, id: makeId(), taskId: extractTaskIdFromPath(input.path) };
+  const existing = readSyncConflicts();
+  const next = [item, ...existing].slice(0, 100);
+  writeSyncConflicts(next);
+};
+
+const isNonRetryableSyncError = (status: number): boolean => {
+  return status === 400 || status === 403 || status === 404 || status === 409 || status === 422;
+};
 
 const shouldCachePath = (path: string): boolean => {
   if (!path.startsWith("/api/")) return false;
@@ -594,6 +736,29 @@ export const apiGet = async <T>(path: string): Promise<T> => {
 export const apiPost = async <T>(path: string, body?: unknown): Promise<T> => {
   const bodyInit = body === undefined || body === null ? undefined : typeof body === "string" ? body : JSON.stringify(body);
   return apiFetchJson<T>(path, { method: "POST", body: bodyInit });
+};
+
+export type QueuedOkResponse = { ok: true; queued: true; queuedId: string } | { ok: true; queued?: false };
+
+const apiPostOkOrQueue = async (path: string, body?: unknown): Promise<QueuedOkResponse> => {
+  const bodyInit = body === undefined || body === null ? undefined : typeof body === "string" ? body : JSON.stringify(body);
+  try {
+    await apiFetchJson<{ ok: true }>(path, { method: "POST", body: bodyInit });
+    return { ok: true };
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    const queuedId = enqueueMutation({ method: "POST", path, body: bodyInit ?? null });
+    return { ok: true, queued: true, queuedId };
+  }
+};
+
+export const processOfflineSync = async (): Promise<{
+  mutations: { processed: number; failed: number; remaining: number };
+  evidence: { processed: number; failed: number; remaining: number };
+}> => {
+  const mutations = await processMutationQueue();
+  const evidence = await processEvidenceOutbox();
+  return { mutations, evidence };
 };
 
 export const login = async (identifier: string, password: string, provider: LoginProvider): Promise<LoginResponse> => {
@@ -1052,17 +1217,25 @@ export const apiGetDashboardOverview = async (): Promise<DashboardOverview> => {
   return apiGet<DashboardOverview>("/api/dashboard/overview");
 };
 
-export const apiUploadTaskEvidenceFile = async (input: { taskId: string; file: File }): Promise<{ id: string }> => {
-  const res = await apiFetchWithAuthRetry(`/api/tasks/${input.taskId}/evidence/upload`, {
-    method: "POST",
-    headers: {
-      "Content-Type": input.file.type || "application/octet-stream",
-      "x-filename": input.file.name,
-    },
-    body: input.file,
-  });
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as { id: string };
+export type UploadEvidenceResponse = { id: string; queued?: true };
+
+export const apiUploadTaskEvidenceFile = async (input: { taskId: string; file: File }): Promise<UploadEvidenceResponse> => {
+  try {
+    const res = await apiFetchWithAuthRetry(`/api/tasks/${input.taskId}/evidence/upload`, {
+      method: "POST",
+      headers: {
+        "Content-Type": input.file.type || "application/octet-stream",
+        "x-filename": input.file.name,
+      },
+      body: input.file,
+    });
+    if (!res.ok) throw await parseError(res);
+    return (await res.json()) as { id: string };
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    const queuedId = await enqueueEvidenceUpload({ kind: "task", taskId: input.taskId, templateChecklistItemId: null, file: input.file });
+    return { id: queuedId, queued: true };
+  }
 };
 
 export const apiDownloadEvidence = async (input: {
@@ -1122,20 +1295,31 @@ export const apiUploadTaskChecklistEvidenceFile = async (input: {
   taskId: string;
   templateChecklistItemId: string;
   file: File;
-}): Promise<{ id: string }> => {
-  const res = await apiFetchWithAuthRetry(
-    `/api/tasks/${input.taskId}/checklist-items/${input.templateChecklistItemId}/evidence/upload`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": input.file.type || "application/octet-stream",
-        "x-filename": input.file.name,
+}): Promise<UploadEvidenceResponse> => {
+  try {
+    const res = await apiFetchWithAuthRetry(
+      `/api/tasks/${input.taskId}/checklist-items/${input.templateChecklistItemId}/evidence/upload`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": input.file.type || "application/octet-stream",
+          "x-filename": input.file.name,
+        },
+        body: input.file,
       },
-      body: input.file,
-    },
-  );
-  if (!res.ok) throw await parseError(res);
-  return (await res.json()) as { id: string };
+    );
+    if (!res.ok) throw await parseError(res);
+    return (await res.json()) as { id: string };
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    const queuedId = await enqueueEvidenceUpload({
+      kind: "checklist",
+      taskId: input.taskId,
+      templateChecklistItemId: input.templateChecklistItemId,
+      file: input.file,
+    });
+    return { id: queuedId, queued: true };
+  }
 };
 
 export const apiGetTask = async (taskId: string): Promise<TaskDetail> => {
@@ -1221,11 +1405,11 @@ export const apiApproveTaskBySuperadmin = async (taskId: string): Promise<{ ok: 
 export const apiSubmitTaskForApproval = async (input: {
   taskId: string;
   checklistResults?: CompleteTaskChecklistResultInput[];
-}): Promise<{ ok: true }> => {
+}): Promise<QueuedOkResponse> => {
   const { taskId, ...rest } = input;
   const body: { checklistResults?: CompleteTaskChecklistResultInput[] } = {};
   if (Array.isArray(rest.checklistResults)) body.checklistResults = rest.checklistResults;
-  return apiPost<{ ok: true }>(`/api/tasks/${encodeURIComponent(taskId)}/submit-for-approval`, body);
+  return apiPostOkOrQueue(`/api/tasks/${encodeURIComponent(taskId)}/submit-for-approval`, body);
 };
 
 export const apiRejectTaskApproval = async (input: {
@@ -1355,23 +1539,23 @@ export const apiCreateWorkOrder = async (input: {
 };
 
 export const apiStartWorkOrder = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/work-orders/${taskId}/start`);
+  return apiPostOkOrQueue(`/api/work-orders/${taskId}/start`);
 };
 
 export const apiPauseWorkOrder = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/work-orders/${taskId}/pause`);
+  return apiPostOkOrQueue(`/api/work-orders/${taskId}/pause`);
 };
 
 export const apiResumeWorkOrder = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/work-orders/${taskId}/resume`);
+  return apiPostOkOrQueue(`/api/work-orders/${taskId}/resume`);
 };
 
 export const apiCancelWorkOrder = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/work-orders/${taskId}/cancel`);
+  return apiPostOkOrQueue(`/api/work-orders/${taskId}/cancel`);
 };
 
 export const apiCloseDowntime = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/work-orders/${taskId}/close-downtime`);
+  return apiPostOkOrQueue(`/api/work-orders/${taskId}/close-downtime`);
 };
 
 export const apiCompleteWorkOrder = async (input: {
@@ -1381,21 +1565,21 @@ export const apiCompleteWorkOrder = async (input: {
   completedAt?: string;
   backdateReason?: string;
   technicianName?: string;
-}): Promise<{ ok: true }> => {
+}): Promise<QueuedOkResponse> => {
   const { taskId, ...body } = input;
-  return apiPost<{ ok: true }>(`/api/work-orders/${taskId}/complete`, body);
+  return apiPostOkOrQueue(`/api/work-orders/${taskId}/complete`, body);
 };
 
-export const apiStartTask = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/tasks/${taskId}/start`);
+export const apiStartTask = async (taskId: string): Promise<QueuedOkResponse> => {
+  return apiPostOkOrQueue(`/api/tasks/${taskId}/start`);
 };
 
-export const apiPauseTask = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/tasks/${taskId}/pause`);
+export const apiPauseTask = async (taskId: string): Promise<QueuedOkResponse> => {
+  return apiPostOkOrQueue(`/api/tasks/${taskId}/pause`);
 };
 
-export const apiResumeTask = async (taskId: string): Promise<{ ok: true }> => {
-  return apiPost<{ ok: true }>(`/api/tasks/${taskId}/resume`);
+export const apiResumeTask = async (taskId: string): Promise<QueuedOkResponse> => {
+  return apiPostOkOrQueue(`/api/tasks/${taskId}/resume`);
 };
 
 export const apiCompleteTask = async (input: {
@@ -1405,9 +1589,9 @@ export const apiCompleteTask = async (input: {
   completedAt?: string;
   backdateReason?: string;
   technicianName?: string;
-}): Promise<{ ok: true }> => {
+}): Promise<QueuedOkResponse> => {
   const { taskId, ...body } = input;
-  return apiPost<{ ok: true }>(`/api/tasks/${taskId}/complete`, body);
+  return apiPostOkOrQueue(`/api/tasks/${taskId}/complete`, body);
 };
 
 export type SchedulingCalendarItem = {

@@ -16,6 +16,7 @@ import WorkOrderDetail from './pages/WorkOrderDetail';
 import Offline from './pages/Offline';
 import Profile from './pages/Profile';
 import { AuthProvider, useAuth } from './providers/AuthProvider';
+import { processOfflineSync } from './lib/api';
 
 const ProtectedRoute = () => {
   const { isAuthenticated } = useAuth();
@@ -46,11 +47,32 @@ const BackButtonHandler: React.FC = () => {
   return null;
 };
 
+const OnlineSyncHandler: React.FC = () => {
+  const { isAuthenticated } = useAuth();
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const onOnline = (): void => {
+      void processOfflineSync();
+    };
+    window.addEventListener('online', onOnline);
+    if (navigator.onLine) {
+      void processOfflineSync();
+    }
+    return () => {
+      window.removeEventListener('online', onOnline);
+    };
+  }, [isAuthenticated]);
+
+  return null;
+};
+
 const App: React.FC = () => {
   return (
     <AuthProvider>
       <HashRouter>
         <BackButtonHandler />
+        <OnlineSyncHandler />
         <Routes>
           <Route path="/" element={<Login />} />
           <Route path="/offline" element={<Offline />} />

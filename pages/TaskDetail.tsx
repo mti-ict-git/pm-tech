@@ -10,6 +10,10 @@ import {
   apiGetAsset,
   apiGetLookups,
   apiGetTask,
+  getPendingEvidenceCount,
+  getPendingMutationCount,
+  getQueuedChecklistEvidenceCount,
+  getQueuedTaskEvidenceCount,
   apiPauseTask,
   apiListAssignableUsers,
   apiRejectTaskApproval,
@@ -41,6 +45,8 @@ const TaskDetail: React.FC = () => {
   const [success, setSuccess] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [approvalActionLoading, setApprovalActionLoading] = useState(false);
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [syncTick, setSyncTick] = useState(0);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectReopenTask, setRejectReopenTask] = useState(false);
@@ -205,6 +211,17 @@ const TaskDetail: React.FC = () => {
       return;
     }
   }, [task?.id, checklistDraft]);
+
+  useEffect(() => {
+    const onOnline = (): void => setOnline(true);
+    const onOffline = (): void => setOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   const onSaveDraft = (): void => {
     if (!task) return;
@@ -541,6 +558,8 @@ const TaskDetail: React.FC = () => {
 
   const assignedLabel = task?.assignedTo.displayName ?? task?.assignedTo.roleName ?? 'Unassigned';
   const assignButtonLabel = task?.assignedTo.userId || task?.assignedTo.roleId ? 'Reassign' : 'Assign';
+  const pendingSyncCount = useMemo(() => getPendingMutationCount() + getPendingEvidenceCount(), [syncTick]);
+  const queuedTaskEvidenceCount = useMemo(() => (task ? getQueuedTaskEvidenceCount(task.id) : 0), [task?.id, syncTick]);
 
   const openAssign = (): void => {
     if (!task) return;
@@ -634,7 +653,13 @@ const TaskDetail: React.FC = () => {
     if (!task) return;
     setActionLoading(true);
     try {
-      await apiStartTask(task.id);
+      const started = await apiStartTask(task.id);
+      if (started.queued) {
+        setSuccess('Queued. Will sync when online.');
+        setTask((prev) => (prev ? { ...prev, status: 'in_progress' } : prev));
+        setSyncTick((v) => v + 1);
+        return;
+      }
       const res = await apiGetTask(task.id);
       setTask(res);
     } catch {
@@ -649,7 +674,13 @@ const TaskDetail: React.FC = () => {
     if (!canPause) return;
     setActionLoading(true);
     try {
-      await apiPauseTask(task.id);
+      const paused = await apiPauseTask(task.id);
+      if (paused.queued) {
+        setSuccess('Queued. Will sync when online.');
+        setTask((prev) => (prev ? { ...prev, status: 'paused' } : prev));
+        setSyncTick((v) => v + 1);
+        return;
+      }
       const res = await apiGetTask(task.id);
       setTask(res);
     } catch {
@@ -664,7 +695,13 @@ const TaskDetail: React.FC = () => {
     if (!canResume) return;
     setActionLoading(true);
     try {
-      await apiResumeTask(task.id);
+      const resumed = await apiResumeTask(task.id);
+      if (resumed.queued) {
+        setSuccess('Queued. Will sync when online.');
+        setTask((prev) => (prev ? { ...prev, status: 'in_progress' } : prev));
+        setSyncTick((v) => v + 1);
+        return;
+      }
       const res = await apiGetTask(task.id);
       setTask(res);
     } catch {
@@ -685,7 +722,12 @@ const TaskDetail: React.FC = () => {
     setSuccess(null);
     try {
       const checklistResults = buildChecklistResults();
-      await apiSubmitTaskForApproval({ taskId: task.id, checklistResults });
+      const submitted = await apiSubmitTaskForApproval({ taskId: task.id, checklistResults });
+      if (submitted.queued) {
+        setSuccess('Queued. Will submit when online.');
+        setSyncTick((v) => v + 1);
+        return;
+      }
       const res = await apiGetTask(task.id);
       setTask(res);
 
@@ -757,7 +799,12 @@ const TaskDetail: React.FC = () => {
     setUploading(true);
     setError(null);
     try {
-      await apiUploadTaskChecklistEvidenceFile({ taskId: task.id, templateChecklistItemId: itemId, file });
+      const uploaded = await apiUploadTaskChecklistEvidenceFile({ taskId: task.id, templateChecklistItemId: itemId, file });
+      if (uploaded.queued) {
+        setSuccess('Attachment queued. Will upload when online.');
+        setSyncTick((v) => v + 1);
+        return;
+      }
       const res = await apiGetTask(task.id);
       setTask(res);
     } catch (err) {
@@ -775,7 +822,12 @@ const TaskDetail: React.FC = () => {
     setUploading(true);
     setError(null);
     try {
-      await apiUploadTaskEvidenceFile({ taskId: task.id, file });
+      const uploaded = await apiUploadTaskEvidenceFile({ taskId: task.id, file });
+      if (uploaded.queued) {
+        setSuccess('Attachment queued. Will upload when online.');
+        setSyncTick((v) => v + 1);
+        return;
+      }
       const res = await apiGetTask(task.id);
       setTask(res);
     } catch (err) {
@@ -821,7 +873,15 @@ const TaskDetail: React.FC = () => {
             <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{task.taskNumber}</h1>
           </div>
           <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-emerald-500" title="Offline-first Sync Active">cloud_done</span>
+            <span
+              className={`material-symbols-outlined ${
+                !online ? 'text-amber-600 dark:text-amber-300' : pendingSyncCount > 0 ? 'text-primary' : 'text-emerald-500'
+              }`}
+              title={pendingSyncCount > 0 ? `${pendingSyncCount} item(s) pending sync` : online ? 'All synced' : 'Offline'}
+              aria-label={pendingSyncCount > 0 ? `${pendingSyncCount} item(s) pending sync` : online ? 'All synced' : 'Offline'}
+            >
+              {!online ? 'cloud_off' : pendingSyncCount > 0 ? 'cloud_upload' : 'cloud_done'}
+            </span>
             <button className="flex items-center justify-center size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
               <span className="material-symbols-outlined text-slate-700 dark:text-slate-300">more_vert</span>
             </button>
@@ -837,6 +897,11 @@ const TaskDetail: React.FC = () => {
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700">
             {assignedLabel}
           </span>
+          {queuedTaskEvidenceCount > 0 ? (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+              Queued attachments: {queuedTaskEvidenceCount}
+            </span>
+          ) : null}
           {canAssign ? (
             <button
               type="button"
@@ -1054,6 +1119,11 @@ const TaskDetail: React.FC = () => {
                             <div>
                               <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Evidence</div>
                               <div className="mt-2 space-y-2">
+                                {getQueuedChecklistEvidenceCount(task.id, item.id) > 0 ? (
+                                  <div className="text-xs text-primary">
+                                    Queued locally: {getQueuedChecklistEvidenceCount(task.id, item.id)}
+                                  </div>
+                                ) : null}
                                 {item.evidence.length === 0 ? (
                                   <div className="text-xs text-slate-500 dark:text-slate-400">No evidence uploaded.</div>
                                 ) : (
