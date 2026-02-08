@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { apiRegisterDevice } from '../lib/api';
 import { registerDeviceToken, useAuth } from '../providers/AuthProvider';
 
+declare const __APP_VERSION__: string | undefined;
+
 type ThemeMode = 'light' | 'dark';
 type Accent = 'blue' | 'green' | 'amber';
 
@@ -83,7 +85,7 @@ const Profile: React.FC = () => {
     return roles[0] ?? '—';
   }, [user]);
 
-  const versionRaw = import.meta.env.VITE_APP_VERSION;
+  const versionRaw = import.meta.env.VITE_APP_VERSION || __APP_VERSION__;
   const versionLabel = versionRaw && versionRaw.trim().length > 0 ? (versionRaw.startsWith('v') ? versionRaw : `v${versionRaw}`) : '—';
 
   useEffect(() => {
