@@ -1,6 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiFindAssetIdByTag, apiGetDashboardOverview, apiListApprovalInbox, getMe, type ApprovalInboxItem, type ApprovalInboxStage, type DashboardOverview, type User } from '../lib/api';
+import {
+  apiFindAssetIdByTag,
+  apiGetDashboardOverview,
+  apiGetMyOutstandingCounts,
+  apiListApprovalInbox,
+  getMe,
+  type ApprovalInboxItem,
+  type ApprovalInboxStage,
+  type DashboardOverview,
+  type MyOutstandingCountsResponse,
+  type User,
+} from '../lib/api';
 import { scanQrCodeValue } from '../lib/qr';
 
 const Home: React.FC = () => {
@@ -8,6 +19,7 @@ const Home: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
+  const [outstandingCounts, setOutstandingCounts] = useState<MyOutstandingCountsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [approvalsOpen, setApprovalsOpen] = useState(false);
@@ -22,9 +34,10 @@ const Home: React.FC = () => {
       setLoading(true);
       setError(null);
       try {
-        const [me, dashboard] = await Promise.all([getMe(), apiGetDashboardOverview()]);
+        const [me, dashboard, counts] = await Promise.all([getMe(), apiGetDashboardOverview(), apiGetMyOutstandingCounts()]);
         setUser(me);
         setOverview(dashboard);
+        setOutstandingCounts(counts);
       } catch {
         setError('Failed to load dashboard data');
       } finally {
@@ -126,6 +139,7 @@ const Home: React.FC = () => {
 
   const stats = overview?.stats;
   const approvalsCount = approvalsStage ? approvals.length : 0;
+  const myOutstandingCount = outstandingCounts?.total ?? 0;
 
   const approvalTitle = approvalsStage === 'PendingSuperadmin' ? 'Pending Superadmin Approval' : 'Pending Supervisor Approval';
   const overdueCount = stats?.overdueCount ?? 0;
@@ -355,6 +369,14 @@ const Home: React.FC = () => {
             <button onClick={() => navigate('/tasks?assigned=me')} className="flex items-center gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm active:scale-95 transition-transform">
               <span className="material-symbols-outlined text-primary">assignment_turned_in</span>
               <span className="font-semibold">My Tasks</span>
+              {myOutstandingCount > 0 ? (
+                <span
+                  className="ml-auto min-w-[1.25rem] h-5 px-1 rounded-full bg-rose-600 text-white text-[12px] leading-5 font-bold text-center"
+                  aria-label={`${myOutstandingCount} outstanding task${myOutstandingCount === 1 ? '' : 's'}`}
+                >
+                  {myOutstandingCount > 99 ? '99+' : myOutstandingCount}
+                </span>
+              ) : null}
             </button>
             <button onClick={() => navigate('/assets')} className="flex items-center gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm active:scale-95 transition-transform">
               <span className="material-symbols-outlined text-primary">search</span>

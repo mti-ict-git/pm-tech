@@ -15,6 +15,339 @@ let lastDiscoveryAttempt = 0;
 const cachePrefix = "pmtech.cache.v1:";
 const cacheLastWriteAtKey = "pmtech.cacheLastWriteAt";
 
+const mutationQueueKey = "pmtech.mutationQueue.v1";
+
+type MutationQueueMethod = "POST";
+type MutationQueueItem = {
+  id: string;
+  method: MutationQueueMethod;
+  path: string;
+  body: string | null;
+  createdAt: string;
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+};
+
+const readMutationQueue = (): MutationQueueItem[] => {
+  try {
+    const raw = localStorage.getItem(mutationQueueKey);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: MutationQueueItem[] = [];
+    for (const v of parsed) {
+      if (!isRecord(v)) continue;
+      const id = v.id;
+      const method = v.method;
+      const path = v.path;
+      const body = v.body;
+      const createdAt = v.createdAt;
+      const attemptCount = v.attemptCount;
+      const lastAttemptAt = v.lastAttemptAt;
+      const lastError = v.lastError;
+      if (typeof id !== "string" || !id.trim()) continue;
+      if (method !== "POST") continue;
+      if (typeof path !== "string" || !path.startsWith("/api/")) continue;
+      if (body !== null && typeof body !== "string") continue;
+      if (typeof createdAt !== "string" || !createdAt.trim()) continue;
+      if (typeof attemptCount !== "number" || !Number.isFinite(attemptCount) || attemptCount < 0) continue;
+      if (lastAttemptAt !== null && typeof lastAttemptAt !== "string") continue;
+      if (lastError !== null && typeof lastError !== "string") continue;
+      out.push({
+        id,
+        method,
+        path,
+        body,
+        createdAt,
+        attemptCount,
+        lastAttemptAt,
+        lastError,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+};
+
+const writeMutationQueue = (items: MutationQueueItem[]): void => {
+  try {
+    localStorage.setItem(mutationQueueKey, JSON.stringify(items));
+  } catch {
+    return;
+  }
+};
+
+const makeId = (): string => {
+  try {
+    const uuid = crypto.randomUUID();
+    if (typeof uuid === "string" && uuid.trim()) return uuid;
+  } catch {}
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+export const getPendingMutationCount = (): number => readMutationQueue().length;
+
+const enqueueMutation = (input: { method: MutationQueueMethod; path: string; body: string | null }): string => {
+  const id = makeId();
+  const next: MutationQueueItem = {
+    id,
+    method: input.method,
+    path: input.path,
+    body: input.body,
+    createdAt: new Date().toISOString(),
+    attemptCount: 0,
+    lastAttemptAt: null,
+    lastError: null,
+  };
+  const items = readMutationQueue();
+  items.push(next);
+  writeMutationQueue(items);
+  return id;
+};
+
+export const processMutationQueue = async (): Promise<{ processed: number; failed: number; remaining: number }> => {
+  const items = readMutationQueue();
+  if (items.length === 0) return { processed: 0, failed: 0, remaining: 0 };
+  let processed = 0;
+  let failed = 0;
+  const remaining: MutationQueueItem[] = [];
+  for (const item of items) {
+    const attemptAt = new Date().toISOString();
+    try {
+      await apiFetchJson<unknown>(item.path, { method: item.method, body: item.body ?? undefined });
+      processed += 1;
+    } catch (e) {
+      const errMessage = e instanceof ApiError ? `${e.status}: ${e.message}` : e instanceof Error ? e.message : "Sync failed";
+      failed += 1;
+      remaining.push({
+        ...item,
+        attemptCount: item.attemptCount + 1,
+        lastAttemptAt: attemptAt,
+        lastError: errMessage,
+      });
+    }
+  }
+  writeMutationQueue(remaining);
+  return { processed, failed, remaining: remaining.length };
+};
+
+const evidenceOutboxMetaKey = "pmtech.evidenceOutboxMeta.v1";
+const evidenceOutboxDbName = "pmtech";
+const evidenceOutboxStore = "evidenceOutbox";
+
+export type EvidenceOutboxKind = "task" | "checklist";
+export type EvidenceOutboxMeta = {
+  id: string;
+  kind: EvidenceOutboxKind;
+  taskId: string;
+  templateChecklistItemId: string | null;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+};
+
+type EvidenceOutboxRecord = EvidenceOutboxMeta & { blob: Blob };
+
+const readEvidenceOutboxMeta = (): EvidenceOutboxMeta[] => {
+  try {
+    const raw = localStorage.getItem(evidenceOutboxMetaKey);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: EvidenceOutboxMeta[] = [];
+    for (const v of parsed) {
+      if (!isRecord(v)) continue;
+      const id = v.id;
+      const kind = v.kind;
+      const taskId = v.taskId;
+      const templateChecklistItemId = v.templateChecklistItemId;
+      const fileName = v.fileName;
+      const contentType = v.contentType;
+      const sizeBytes = v.sizeBytes;
+      const createdAt = v.createdAt;
+      const lastAttemptAt = v.lastAttemptAt;
+      const lastError = v.lastError;
+      if (typeof id !== "string" || !id.trim()) continue;
+      if (kind !== "task" && kind !== "checklist") continue;
+      if (typeof taskId !== "string" || !taskId.trim()) continue;
+      if (templateChecklistItemId !== null && typeof templateChecklistItemId !== "string") continue;
+      if (typeof fileName !== "string" || !fileName.trim()) continue;
+      if (typeof contentType !== "string") continue;
+      if (typeof sizeBytes !== "number" || !Number.isFinite(sizeBytes) || sizeBytes < 0) continue;
+      if (typeof createdAt !== "string" || !createdAt.trim()) continue;
+      if (lastAttemptAt !== null && typeof lastAttemptAt !== "string") continue;
+      if (lastError !== null && typeof lastError !== "string") continue;
+      out.push({
+        id,
+        kind,
+        taskId,
+        templateChecklistItemId: templateChecklistItemId ?? null,
+        fileName,
+        contentType,
+        sizeBytes,
+        createdAt,
+        lastAttemptAt: lastAttemptAt ?? null,
+        lastError: lastError ?? null,
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+};
+
+const writeEvidenceOutboxMeta = (items: EvidenceOutboxMeta[]): void => {
+  try {
+    localStorage.setItem(evidenceOutboxMetaKey, JSON.stringify(items));
+  } catch {
+    return;
+  }
+};
+
+export const listEvidenceOutboxMeta = (): EvidenceOutboxMeta[] => readEvidenceOutboxMeta();
+
+export const getQueuedChecklistEvidenceCount = (taskId: string, templateChecklistItemId: string): number => {
+  const normalizedTaskId = taskId.trim();
+  const normalizedItemId = templateChecklistItemId.trim();
+  if (!normalizedTaskId || !normalizedItemId) return 0;
+  return readEvidenceOutboxMeta().filter(
+    (m) => m.kind === "checklist" && m.taskId === normalizedTaskId && m.templateChecklistItemId === normalizedItemId,
+  ).length;
+};
+
+export const getQueuedTaskEvidenceCount = (taskId: string): number => {
+  const normalizedTaskId = taskId.trim();
+  if (!normalizedTaskId) return 0;
+  return readEvidenceOutboxMeta().filter((m) => m.kind === "task" && m.taskId === normalizedTaskId).length;
+};
+
+export const getPendingEvidenceCount = (): number => readEvidenceOutboxMeta().length;
+
+const openEvidenceOutboxDb = async (): Promise<IDBDatabase> => {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(evidenceOutboxDbName, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(evidenceOutboxStore)) {
+        db.createObjectStore(evidenceOutboxStore, { keyPath: "id" });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error ?? new Error("Failed to open DB"));
+  });
+};
+
+const idbPutEvidence = async (record: EvidenceOutboxRecord): Promise<void> => {
+  const db = await openEvidenceOutboxDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(evidenceOutboxStore, "readwrite");
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("DB write failed"));
+    tx.objectStore(evidenceOutboxStore).put(record);
+  });
+};
+
+const idbGetEvidence = async (id: string): Promise<EvidenceOutboxRecord | null> => {
+  const db = await openEvidenceOutboxDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(evidenceOutboxStore, "readonly");
+    const req = tx.objectStore(evidenceOutboxStore).get(id);
+    req.onsuccess = () => {
+      const v: unknown = req.result as unknown;
+      if (!v || typeof v !== "object") {
+        resolve(null);
+        return;
+      }
+      resolve(v as EvidenceOutboxRecord);
+    };
+    req.onerror = () => reject(req.error ?? new Error("DB read failed"));
+  });
+};
+
+const idbDeleteEvidence = async (id: string): Promise<void> => {
+  const db = await openEvidenceOutboxDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(evidenceOutboxStore, "readwrite");
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("DB delete failed"));
+    tx.objectStore(evidenceOutboxStore).delete(id);
+  });
+};
+
+const enqueueEvidenceUpload = async (input: {
+  kind: EvidenceOutboxKind;
+  taskId: string;
+  templateChecklistItemId: string | null;
+  file: File;
+}): Promise<string> => {
+  const id = makeId();
+  const meta: EvidenceOutboxMeta = {
+    id,
+    kind: input.kind,
+    taskId: input.taskId,
+    templateChecklistItemId: input.templateChecklistItemId,
+    fileName: input.file.name || "file",
+    contentType: input.file.type || "application/octet-stream",
+    sizeBytes: input.file.size,
+    createdAt: new Date().toISOString(),
+    lastAttemptAt: null,
+    lastError: null,
+  };
+  const existing = readEvidenceOutboxMeta();
+  existing.push(meta);
+  writeEvidenceOutboxMeta(existing);
+  await idbPutEvidence({ ...meta, blob: input.file });
+  return id;
+};
+
+export const processEvidenceOutbox = async (): Promise<{ processed: number; failed: number; remaining: number }> => {
+  const items = readEvidenceOutboxMeta();
+  if (items.length === 0) return { processed: 0, failed: 0, remaining: 0 };
+  let processed = 0;
+  let failed = 0;
+  const remaining: EvidenceOutboxMeta[] = [];
+
+  for (const meta of items) {
+    const attemptAt = new Date().toISOString();
+    try {
+      const record = await idbGetEvidence(meta.id);
+      if (!record) {
+        processed += 1;
+        continue;
+      }
+      const path =
+        meta.kind === "task"
+          ? `/api/tasks/${encodeURIComponent(meta.taskId)}/evidence/upload`
+          : `/api/tasks/${encodeURIComponent(meta.taskId)}/checklist-items/${encodeURIComponent(
+              meta.templateChecklistItemId ?? "",
+            )}/evidence/upload`;
+      const res = await apiFetchWithAuthRetry(path, {
+        method: "POST",
+        headers: {
+          "Content-Type": meta.contentType || "application/octet-stream",
+          "x-filename": meta.fileName,
+        },
+        body: record.blob,
+      });
+      if (!res.ok) throw await parseError(res);
+      await idbDeleteEvidence(meta.id);
+      processed += 1;
+    } catch (e) {
+      const errMessage = e instanceof ApiError ? `${e.status}: ${e.message}` : e instanceof Error ? e.message : "Upload failed";
+      failed += 1;
+      remaining.push({ ...meta, lastAttemptAt: attemptAt, lastError: errMessage });
+    }
+  }
+
+  writeEvidenceOutboxMeta(remaining);
+  return { processed, failed, remaining: remaining.length };
+};
+
 type CacheEntry<T> = { savedAt: string; value: T };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
@@ -682,6 +1015,12 @@ export type TaskStatusCountsResponse = {
   overdue: number;
 };
 
+export type MyOutstandingCountsResponse = {
+  waitingForApproval: number;
+  needsRevision: number;
+  total: number;
+};
+
 export type DashboardOverview = {
   stats: {
     totalAssetsInPm: number;
@@ -852,6 +1191,10 @@ export const apiGetTaskStatusCounts = async (input: {
   if (input.maintenanceType) params.set("maintenanceType", input.maintenanceType);
   const query = params.toString();
   return apiGet<TaskStatusCountsResponse>(`/api/tasks/status-counts${query ? `?${query}` : ""}`);
+};
+
+export const apiGetMyOutstandingCounts = async (): Promise<MyOutstandingCountsResponse> => {
+  return apiGet<MyOutstandingCountsResponse>("/api/tasks/my-outstanding-counts");
 };
 
 export const apiListApprovalInbox = async (input: {
