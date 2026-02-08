@@ -55,6 +55,8 @@ const TaskDetail: React.FC = () => {
   const [reviseReopenTask, setReviseReopenTask] = useState(true);
   const [checklistDraft, setChecklistDraft] = useState<Record<string, { outcome: 0 | 1 | 2 | null; notes: string }>>({});
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [draftSaveNotice, setDraftSaveNotice] = useState<string | null>(null);
+  const [draftSaveFlash, setDraftSaveFlash] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
@@ -90,6 +92,7 @@ const TaskDetail: React.FC = () => {
   const checklistFileInputRef = useRef<HTMLInputElement | null>(null);
   const taskFileInputRef = useRef<HTMLInputElement | null>(null);
   const checklistDraftInitTaskIdRef = useRef<string | null>(null);
+  const draftSaveNoticeTimerRef = useRef<number | null>(null);
 
   const checklistDraftStorageKey = (id: string): string => `pm-tech.checklistDraft.${id}`;
   const checklistDraftSavedAtStorageKey = (id: string): string => `pm-tech.checklistDraftSavedAt.${id}`;
@@ -225,15 +228,40 @@ const TaskDetail: React.FC = () => {
 
   const onSaveDraft = (): void => {
     if (!task) return;
+    setError(null);
     try {
       localStorage.setItem(checklistDraftStorageKey(task.id), JSON.stringify(checklistDraft));
       const savedAt = new Date().toISOString();
       localStorage.setItem(checklistDraftSavedAtStorageKey(task.id), savedAt);
       setDraftSavedAt(savedAt);
+      setDraftSaveNotice('Draft saved');
+      setDraftSaveFlash(true);
     } catch {
       setError('Failed to save draft locally');
     }
   };
+
+  useEffect(() => {
+    if (!draftSaveNotice) return;
+    if (draftSaveNoticeTimerRef.current !== null) {
+      window.clearTimeout(draftSaveNoticeTimerRef.current);
+    }
+    draftSaveNoticeTimerRef.current = window.setTimeout(() => {
+      setDraftSaveNotice(null);
+    }, 2500);
+    return () => {
+      if (draftSaveNoticeTimerRef.current !== null) {
+        window.clearTimeout(draftSaveNoticeTimerRef.current);
+        draftSaveNoticeTimerRef.current = null;
+      }
+    };
+  }, [draftSaveNotice]);
+
+  useEffect(() => {
+    if (!draftSaveFlash) return;
+    const timer = window.setTimeout(() => setDraftSaveFlash(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [draftSaveFlash]);
 
   useEffect(() => {
     return () => {
@@ -560,6 +588,12 @@ const TaskDetail: React.FC = () => {
   const assignButtonLabel = task?.assignedTo.userId || task?.assignedTo.roleId ? 'Reassign' : 'Assign';
   const pendingSyncCount = useMemo(() => getPendingMutationCount() + getPendingEvidenceCount(), [syncTick]);
   const queuedTaskEvidenceCount = useMemo(() => (task ? getQueuedTaskEvidenceCount(task.id) : 0), [task?.id, syncTick]);
+  const draftSavedLabel = useMemo(() => {
+    if (!draftSavedAt) return null;
+    const d = new Date(draftSavedAt);
+    if (Number.isNaN(d.getTime())) return draftSavedAt;
+    return d.toLocaleString();
+  }, [draftSavedAt]);
 
   const openAssign = (): void => {
     if (!task) return;
@@ -1578,8 +1612,8 @@ const TaskDetail: React.FC = () => {
                   onClick={onSaveDraft}
                   className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors disabled:opacity-60"
                 >
-                  <span className="material-symbols-outlined text-xl">save</span>
-                  Save
+                  <span className="material-symbols-outlined text-xl">{draftSaveFlash ? 'check' : 'save'}</span>
+                  {draftSaveFlash ? 'Saved' : 'Save'}
                 </button>
 
                 <button
@@ -1590,6 +1624,16 @@ const TaskDetail: React.FC = () => {
                   <span className="material-symbols-outlined text-xl">send</span>
                   Submit for approval
                 </button>
+
+                <div
+                  className="col-span-12 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1"
+                  aria-live="polite"
+                >
+                  <span className={draftSaveNotice ? 'text-emerald-600 dark:text-emerald-300 font-semibold' : ''}>
+                    {draftSaveNotice ?? (draftSavedLabel ? `Saved locally: ${draftSavedLabel}` : 'Draft not saved yet')}
+                  </span>
+                  <span>{!canEditChecklist ? 'Read-only' : 'Local-only draft'}</span>
+                </div>
               </div>
             )}
           </div>

@@ -9,6 +9,9 @@ import {
   getPendingMutationCount,
   getOfflineCacheLastWriteAt,
   getSyncConflictCount,
+  getSyncConflictCountForTask,
+  listEvidenceOutboxMeta,
+  listMutationQueueMeta,
   processOfflineSync,
   type TaskDetail,
 } from '../lib/api';
@@ -21,6 +24,14 @@ type CachedTask = {
   savedAt: string;
 };
 
+type TaskSyncState = 'idle' | 'syncing' | 'ok' | 'failed';
+
+type TaskSyncRow = {
+  taskId: string;
+  state: TaskSyncState;
+  message: string | null;
+};
+
 type CacheEntry<T> = { savedAt: string; value: T };
 
 const Offline: React.FC = () => {
@@ -31,6 +42,7 @@ const Offline: React.FC = () => {
   const [lastWriteAt, setLastWriteAt] = useState<string | null>(() => getOfflineCacheLastWriteAt());
   const [lastSyncSummary, setLastSyncSummary] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [syncRows, setSyncRows] = useState<TaskSyncRow[]>([]);
 
   const pendingMutations = useMemo(() => getPendingMutationCount(), [syncing, online, lastWriteAt, refreshTick]);
   const pendingEvidence = useMemo(() => getPendingEvidenceCount(), [syncing, online, lastWriteAt, refreshTick]);
@@ -79,6 +91,79 @@ const Offline: React.FC = () => {
     return out;
   }, [lastWriteAt]);
 
+  const queuedMutationsByTask = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const m of listMutationQueueMeta()) {
+      if (!m.taskId) continue;
+      out.set(m.taskId, (out.get(m.taskId) ?? 0) + 1);
+    }
+    return out;
+  }, [refreshTick, syncing]);
+
+  const queuedEvidenceByTask = useMemo(() => {
+    const out = new Map<string, number>();
+    for (const m of listEvidenceOutboxMeta()) {
+      const taskId = m.taskId;
+      if (!taskId) continue;
+      out.set(taskId, (out.get(taskId) ?? 0) + 1);
+    }
+    return out;
+  }, [refreshTick, syncing]);
+
+  const syncRowByTaskId = useMemo(() => {
+    const map = new Map<string, TaskSyncRow>();
+    for (const r of syncRows) map.set(r.taskId, r);
+    return map;
+  }, [syncRows]);
+
+  const getTaskSyncPill = (taskId: string): { label: string; className: string } => {
+    const conflicts = getSyncConflictCountForTask(taskId);
+    if (conflicts > 0) {
+      return {
+        label: 'Conflict',
+        className:
+          'px-2 py-0.5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40 text-[10px] font-bold uppercase rounded leading-tight',
+      };
+    }
+
+    const row = syncRowByTaskId.get(taskId);
+    if (row?.state === 'failed') {
+      return {
+        label: 'Failed',
+        className:
+          'px-2 py-0.5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40 text-[10px] font-bold uppercase rounded leading-tight',
+      };
+    }
+    if (row?.state === 'syncing') {
+      return {
+        label: 'Syncing',
+        className: 'px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold uppercase rounded leading-tight',
+      };
+    }
+    if (row?.state === 'ok') {
+      return {
+        label: 'Synced',
+        className:
+          'px-2 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/40 text-[10px] font-bold uppercase rounded leading-tight',
+      };
+    }
+
+    const pendingActions = queuedMutationsByTask.get(taskId) ?? 0;
+    const pendingFiles = queuedEvidenceByTask.get(taskId) ?? 0;
+    if (pendingActions + pendingFiles > 0) {
+      return {
+        label: 'Pending',
+        className: 'px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold uppercase rounded leading-tight',
+      };
+    }
+
+    return {
+      label: 'Synced',
+      className:
+        'px-2 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900/40 text-[10px] font-bold uppercase rounded leading-tight',
+    };
+  };
+
   const formatWhen = (iso: string): string => {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
@@ -93,6 +178,7 @@ const Offline: React.FC = () => {
     setSyncing(true);
     setError(null);
     setLastSyncSummary(null);
+    setSyncRows([]);
     try {
       const syncRes = await processOfflineSync();
       setLastSyncSummary(
@@ -101,7 +187,20 @@ const Offline: React.FC = () => {
       const list = await apiListTasks({ assigned: 'me', maintenanceType: 'all', page: 1, pageSize: 50 });
       const ids = (list.items ?? []).map((i) => i.id).filter((id) => typeof id === 'string' && id.trim());
       const unique = Array.from(new Set(ids)).slice(0, 20);
-      await Promise.all(unique.map((id) => apiGetTask(id)));
+
+      setSyncRows(unique.map((taskId) => ({ taskId, state: 'idle', message: null })));
+
+      for (const id of unique) {
+        setSyncRows((prev) => prev.map((r) => (r.taskId === id ? { ...r, state: 'syncing', message: null } : r)));
+        try {
+          await apiGetTask(id);
+          setSyncRows((prev) => prev.map((r) => (r.taskId === id ? { ...r, state: 'ok', message: null } : r)));
+        } catch (e) {
+          const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to refresh';
+          setSyncRows((prev) => prev.map((r) => (r.taskId === id ? { ...r, state: 'failed', message } : r)));
+        }
+      }
+
       setLastWriteAt(getOfflineCacheLastWriteAt());
       setRefreshTick((v) => v + 1);
     } catch (e) {
@@ -182,6 +281,42 @@ const Offline: React.FC = () => {
           </h3>
         </div>
 
+        {syncing && syncRows.length > 0 ? (
+          <div className="px-4 pb-3">
+            <div className="bg-white dark:bg-slate-900 rounded-lg p-4 shadow-sm border border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">Refreshing cached tasks</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {syncRows.filter((r) => r.state === 'ok' || r.state === 'failed').length}/{syncRows.length}
+                </p>
+              </div>
+              <div className="space-y-2" aria-live="polite">
+                {syncRows.slice(0, 6).map((r) => (
+                  <div key={r.taskId} className="flex items-center justify-between">
+                    <span className="text-xs text-slate-600 dark:text-slate-300 truncate max-w-[70%]">{r.taskId}</span>
+                    <span
+                      className={
+                        r.state === 'syncing'
+                          ? 'text-xs text-primary'
+                          : r.state === 'ok'
+                            ? 'text-xs text-emerald-600 dark:text-emerald-300'
+                            : r.state === 'failed'
+                              ? 'text-xs text-rose-600 dark:text-rose-300'
+                              : 'text-xs text-slate-400'
+                      }
+                    >
+                      {r.state === 'syncing' ? 'Syncing…' : r.state === 'ok' ? 'Updated' : r.state === 'failed' ? 'Failed' : 'Queued'}
+                    </span>
+                  </div>
+                ))}
+                {syncRows.length > 6 ? (
+                  <div className="text-xs text-slate-500 dark:text-slate-400">+{syncRows.length - 6} more…</div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="space-y-3 px-4 pb-6">
           {cachedTasks.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-lg p-4 shadow-sm border border-slate-100 dark:border-slate-800">
@@ -196,7 +331,25 @@ const Offline: React.FC = () => {
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="px-2 py-0.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 text-[10px] font-bold uppercase rounded leading-tight">Cached</span>
+                  <span className={getTaskSyncPill(t.id).className}>{getTaskSyncPill(t.id).label}</span>
                   <span className="text-[11px] text-slate-500 dark:text-slate-400">{formatWhen(t.savedAt)}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  {queuedMutationsByTask.get(t.id) ? (
+                    <span className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold uppercase rounded leading-tight">
+                      Pending actions: {queuedMutationsByTask.get(t.id)}
+                    </span>
+                  ) : null}
+                  {queuedEvidenceByTask.get(t.id) ? (
+                    <span className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 text-[10px] font-bold uppercase rounded leading-tight">
+                      Pending files: {queuedEvidenceByTask.get(t.id)}
+                    </span>
+                  ) : null}
+                  {getSyncConflictCountForTask(t.id) > 0 ? (
+                    <span className="px-2 py-0.5 bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40 text-[10px] font-bold uppercase rounded leading-tight">
+                      Conflicts: {getSyncConflictCountForTask(t.id)}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="font-bold text-slate-900 dark:text-slate-100">{t.taskNumber}</p>
                 {t.assetName ? <p className="text-sm text-slate-600 dark:text-slate-300">{t.assetName}</p> : null}

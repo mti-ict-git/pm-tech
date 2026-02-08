@@ -94,6 +94,28 @@ const makeId = (): string => {
 
 export const getPendingMutationCount = (): number => readMutationQueue().length;
 
+export type MutationQueueMeta = {
+  id: string;
+  path: string;
+  taskId: string | null;
+  createdAt: string;
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  lastError: string | null;
+};
+
+export const listMutationQueueMeta = (): MutationQueueMeta[] => {
+  return readMutationQueue().map((m) => ({
+    id: m.id,
+    path: m.path,
+    taskId: extractTaskIdFromPath(m.path),
+    createdAt: m.createdAt,
+    attemptCount: m.attemptCount,
+    lastAttemptAt: m.lastAttemptAt,
+    lastError: m.lastError,
+  }));
+};
+
 const enqueueMutation = (input: { method: MutationQueueMethod; path: string; body: string | null }): string => {
   const id = makeId();
   const next: MutationQueueItem = {
