@@ -19,7 +19,7 @@ const isPushEnabled = (): boolean => {
 type PushPermissionResult = { receive: string };
 type PushRegistrationToken = { value: string };
 
-const registerDeviceToken = async (): Promise<string | null> => {
+export const registerDeviceToken = async (): Promise<string | null> => {
   const { Capacitor } = await import("@capacitor/core");
   if (!Capacitor.isNativePlatform()) return null;
 

@@ -32,6 +32,9 @@ View your app in AI Studio: https://ai.studio/apps/drive/1CobEZxXeyTrGD39Ld8JWef
 Quick start:
 `npm run build:android`
 
+Replace Android app icon + splash (replace ./assets/logo.png, then run):
+`npm run assets:android`
+
 1. Install dependencies:
    `npm install`
 2. Build web bundle:

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../providers/AuthProvider';
+import { apiRegisterDevice } from '../lib/api';
+import { registerDeviceToken, useAuth } from '../providers/AuthProvider';
 
 type ThemeMode = 'light' | 'dark';
 type Accent = 'blue' | 'green' | 'amber';
@@ -109,6 +110,22 @@ const Profile: React.FC = () => {
   useEffect(() => {
     localStorage.setItem(PUSH_KEY, pushEnabled ? 'true' : 'false');
   }, [pushEnabled]);
+
+  useEffect(() => {
+    if (!pushEnabled) return;
+    if (!user) return;
+
+    void (async () => {
+      try {
+        const token = await registerDeviceToken();
+        if (!token) return;
+        const { Capacitor } = await import('@capacitor/core');
+        const platform = Capacitor.getPlatform();
+        await apiRegisterDevice({ platform, token });
+      } catch {
+      }
+    })();
+  }, [pushEnabled, user]);
 
   const handleLogout = () => {
     logout();

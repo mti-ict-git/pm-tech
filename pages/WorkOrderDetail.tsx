@@ -2,13 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ApiError,
+  apiAssignWorkOrder,
   apiApproveTaskBySupervisor,
   apiApproveTaskBySuperadmin,
   apiCancelWorkOrder,
   apiCloseDowntime,
   apiCompleteWorkOrder,
+  apiGetLookups,
   apiGetTask,
   apiGetWorkOrder,
+  apiListAssignableUsers,
   apiPauseWorkOrder,
   apiRejectTaskApproval,
   apiResumeWorkOrder,
@@ -16,7 +19,9 @@ import {
   apiUploadTaskChecklistEvidenceFile,
   apiUploadTaskEvidenceFile,
   type CompleteTaskChecklistResultInput,
+  type LookupRole,
   type TaskDetail,
+  type UserSummary,
   type WorkOrderDetail,
 } from '../lib/api';
 import { useAuth } from '../providers/AuthProvider';
@@ -44,6 +49,15 @@ const WorkOrderDetailPage: React.FC = () => {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectReopenTask, setRejectReopenTask] = useState(false);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignMode, setAssignMode] = useState<'user' | 'role' | 'unassigned'>('user');
+  const [assignUserId, setAssignUserId] = useState('');
+  const [assignRoleId, setAssignRoleId] = useState('');
+  const [assignUsers, setAssignUsers] = useState<UserSummary[]>([]);
+  const [assignRoles, setAssignRoles] = useState<LookupRole[]>([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignOptionsLoading, setAssignOptionsLoading] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const [checklistDraft, setChecklistDraft] = useState<Record<string, { outcome: 0 | 1 | 2 | null; notes: string }>>({});
   const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -81,18 +95,46 @@ const WorkOrderDetailPage: React.FC = () => {
     setChecklistDraft(next);
   }, [task?.id]);
 
+  useEffect(() => {
+    if (!assignOpen) return;
+    let cancelled = false;
+    setAssignOptionsLoading(true);
+    setAssignError(null);
+    void (async () => {
+      try {
+        const [lookups, users] = await Promise.all([
+          apiGetLookups(),
+          apiListAssignableUsers({ page: 1, pageSize: 200, isActive: true }),
+        ]);
+        if (cancelled) return;
+        setAssignRoles(lookups.roles ?? []);
+        setAssignUsers(users.items ?? []);
+      } catch (e) {
+        if (cancelled) return;
+        const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to load assignees';
+        setAssignError(message);
+      } finally {
+        if (!cancelled) setAssignOptionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assignOpen]);
+
   const statusLower = (workOrder?.status ?? '').toLowerCase();
   const approvalStatus = (task?.approvalStatus ?? '').trim();
   const isApprovalLocked = approvalStatus === 'PendingSupervisor' || approvalStatus === 'PendingSuperadmin' || approvalStatus === 'Approved';
+  const roles = user?.roles ?? [];
   const canStart = !isApprovalLocked && statusLower === 'open';
   const canPause = !isApprovalLocked && statusLower === 'in_progress';
   const canResume = !isApprovalLocked && statusLower === 'paused';
   const canComplete = !isApprovalLocked && statusLower !== 'completed' && statusLower !== 'cancelled';
   const canCancel = !isApprovalLocked && statusLower !== 'completed' && statusLower !== 'cancelled';
   const canCloseDowntime = Boolean(workOrder?.downtimeStartedAt && !workOrder?.downtimeEndedAt);
+  const canAssign = roles.includes('Supervisor') || roles.includes('Admin') || roles.includes('Superadmin');
 
   const canReview = useMemo(() => {
-    const roles = user?.roles ?? [];
     if (approvalStatus === 'PendingSupervisor') {
       return roles.includes('Supervisor') || roles.includes('Admin') || roles.includes('Superadmin');
     }
@@ -150,6 +192,60 @@ const WorkOrderDetailPage: React.FC = () => {
   }, [workOrder]);
 
   const assignedLabel = workOrder?.assignedTo.displayName ?? workOrder?.assignedTo.roleName ?? 'Unassigned';
+  const assignButtonLabel = workOrder?.assignedTo.userId || workOrder?.assignedTo.roleId ? 'Reassign' : 'Assign';
+
+  const openAssign = (): void => {
+    if (!workOrder) return;
+    if (workOrder.assignedTo.userId) {
+      setAssignMode('user');
+      setAssignUserId(workOrder.assignedTo.userId);
+      setAssignRoleId('');
+    } else if (workOrder.assignedTo.roleId) {
+      setAssignMode('role');
+      setAssignRoleId(workOrder.assignedTo.roleId);
+      setAssignUserId('');
+    } else {
+      setAssignMode('unassigned');
+      setAssignUserId('');
+      setAssignRoleId('');
+    }
+    setAssignError(null);
+    setAssignOpen(true);
+  };
+
+  const sortedAssignUsers = useMemo(() => {
+    return assignUsers
+      .slice()
+      .sort((a, b) => (a.displayName ?? a.username).localeCompare(b.displayName ?? b.username));
+  }, [assignUsers]);
+
+  const sortedAssignRoles = useMemo(() => {
+    return assignRoles.slice().sort((a, b) => a.name.localeCompare(b.name));
+  }, [assignRoles]);
+
+  const onAssign = async (): Promise<void> => {
+    if (!workOrder) return;
+    setAssignLoading(true);
+    setAssignError(null);
+    try {
+      if (assignMode === 'user') {
+        if (!assignUserId) throw new Error('Select technician');
+        await apiAssignWorkOrder({ taskId: workOrder.id, assignedToUserId: assignUserId, assignedToRoleId: null });
+      } else if (assignMode === 'role') {
+        if (!assignRoleId) throw new Error('Select role');
+        await apiAssignWorkOrder({ taskId: workOrder.id, assignedToRoleId: assignRoleId, assignedToUserId: null });
+      } else {
+        await apiAssignWorkOrder({ taskId: workOrder.id, assignedToUserId: null, assignedToRoleId: null });
+      }
+      await loadDetail();
+      setAssignOpen(false);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to assign';
+      setAssignError(message);
+    } finally {
+      setAssignLoading(false);
+    }
+  };
 
   const buildChecklistResults = (): CompleteTaskChecklistResultInput[] => {
     const items = task?.checklistItems ?? [];
@@ -370,6 +466,15 @@ const WorkOrderDetailPage: React.FC = () => {
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700">
             {assignedLabel}
           </span>
+          {canAssign ? (
+            <button
+              type="button"
+              onClick={openAssign}
+              className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700"
+            >
+              {assignButtonLabel}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -531,6 +636,136 @@ const WorkOrderDetailPage: React.FC = () => {
           </div>
         </section>
       </main>
+
+      {assignOpen ? (
+        <div className="fixed inset-0 z-[60]">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setAssignOpen(false)}
+            className="absolute inset-0 bg-black/30"
+          />
+          <div className="absolute inset-x-0 bottom-0 bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-4 pb-8">
+            <div className="max-w-screen-sm mx-auto space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Assign Work Order</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">{workOrder.taskNumber}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssignOpen(false)}
+                  className="size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center"
+                  aria-label="Close"
+                >
+                  <span className="material-symbols-outlined text-slate-600 dark:text-slate-300">close</span>
+                </button>
+              </div>
+
+              {assignError ? (
+                <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl border border-rose-200 dark:border-rose-900 p-3 text-sm text-rose-700 dark:text-rose-300">
+                  {assignError}
+                </div>
+              ) : null}
+
+              {assignOptionsLoading ? (
+                <div className="text-sm text-slate-500 dark:text-slate-400">Loading assignees…</div>
+              ) : null}
+
+              <div className="grid grid-cols-12 gap-2">
+                <label className="col-span-12 md:col-span-4 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <input
+                    type="radio"
+                    name="assign-mode"
+                    value="user"
+                    checked={assignMode === 'user'}
+                    onChange={() => setAssignMode('user')}
+                    className="size-4"
+                  />
+                  User
+                </label>
+                <label className="col-span-12 md:col-span-4 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <input
+                    type="radio"
+                    name="assign-mode"
+                    value="role"
+                    checked={assignMode === 'role'}
+                    onChange={() => setAssignMode('role')}
+                    className="size-4"
+                  />
+                  Role
+                </label>
+                <label className="col-span-12 md:col-span-4 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <input
+                    type="radio"
+                    name="assign-mode"
+                    value="unassigned"
+                    checked={assignMode === 'unassigned'}
+                    onChange={() => setAssignMode('unassigned')}
+                    className="size-4"
+                  />
+                  Unassign
+                </label>
+              </div>
+
+              {assignMode === 'user' ? (
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Technician</label>
+                  <select
+                    value={assignUserId}
+                    onChange={(e) => setAssignUserId(e.target.value)}
+                    className="mt-2 w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm"
+                    disabled={assignOptionsLoading}
+                  >
+                    <option value="">Select technician</option>
+                    {sortedAssignUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.displayName ?? u.username}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : assignMode === 'role' ? (
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Role</label>
+                  <select
+                    value={assignRoleId}
+                    onChange={(e) => setAssignRoleId(e.target.value)}
+                    className="mt-2 w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm"
+                    disabled={assignOptionsLoading}
+                  >
+                    <option value="">Select role</option>
+                    {sortedAssignRoles.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={assignLoading}
+                  onClick={() => setAssignOpen(false)}
+                  className="flex-1 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={assignLoading || assignOptionsLoading}
+                  onClick={() => void onAssign()}
+                  className="flex-1 h-12 rounded-xl bg-primary text-white font-bold disabled:opacity-60"
+                >
+                  {assignButtonLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <input ref={checklistFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onChecklistFileSelected} />
       <input ref={taskFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onTaskFileSelected} />

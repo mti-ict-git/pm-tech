@@ -2,13 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ApiError,
+  apiAssignTask,
   apiApproveTaskBySupervisor,
   apiApproveTaskBySuperadmin,
   apiDownloadAssetImage,
   apiDownloadChecklistEvidence,
   apiGetAsset,
+  apiGetLookups,
   apiGetTask,
   apiPauseTask,
+  apiListAssignableUsers,
   apiRejectTaskApproval,
   apiReviseTaskApproval,
   apiResumeTask,
@@ -18,8 +21,10 @@ import {
   apiUploadTaskChecklistEvidenceFile,
   apiUploadTaskEvidenceFile,
   type CompleteTaskChecklistResultInput,
+  type LookupRole,
   type TaskChecklistEvidence,
   type TaskDetail,
+  type UserSummary,
 } from '../lib/api';
 import { useAuth } from '../providers/AuthProvider';
 
@@ -50,6 +55,15 @@ const TaskDetail: React.FC = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFileName, setPreviewFileName] = useState<string | null>(null);
   const [previewContentType, setPreviewContentType] = useState<string | null>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignMode, setAssignMode] = useState<'user' | 'role' | 'unassigned'>('user');
+  const [assignUserId, setAssignUserId] = useState('');
+  const [assignRoleId, setAssignRoleId] = useState('');
+  const [assignUsers, setAssignUsers] = useState<UserSummary[]>([]);
+  const [assignRoles, setAssignRoles] = useState<LookupRole[]>([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+  const [assignOptionsLoading, setAssignOptionsLoading] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const previewViewportRef = useRef<HTMLDivElement | null>(null);
   const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const panRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null);
@@ -67,6 +81,34 @@ const TaskDetail: React.FC = () => {
   const checklistUploadItemIdRef = useRef<string | null>(null);
   const checklistFileInputRef = useRef<HTMLInputElement | null>(null);
   const taskFileInputRef = useRef<HTMLInputElement | null>(null);
+  const checklistDraftInitTaskIdRef = useRef<string | null>(null);
+
+  const checklistDraftStorageKey = (id: string): string => `pm-tech.checklistDraft.${id}`;
+
+  const parseChecklistDraft = (
+    raw: string,
+  ): Record<string, { outcome: 0 | 1 | 2 | null; notes: string }> | null => {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const record = parsed as Record<string, unknown>;
+      const next: Record<string, { outcome: 0 | 1 | 2 | null; notes: string }> = {};
+      for (const [key, value] of Object.entries(record)) {
+        if (typeof key !== 'string' || !key.trim()) continue;
+        if (!value || typeof value !== 'object') continue;
+        const v = value as Record<string, unknown>;
+        const outcome = v.outcome;
+        const notes = v.notes;
+        const validOutcome = outcome === null || outcome === 0 || outcome === 1 || outcome === 2;
+        if (!validOutcome) continue;
+        if (typeof notes !== 'string') continue;
+        next[key] = { outcome: outcome as 0 | 1 | 2 | null, notes };
+      }
+      return next;
+    } catch {
+      return null;
+    }
+  };
 
   useEffect(() => {
     let isCancelled = false;
@@ -127,14 +169,36 @@ const TaskDetail: React.FC = () => {
 
   useEffect(() => {
     if (!task) return;
-    const next: Record<string, { outcome: 0 | 1 | 2 | null; notes: string }> = {};
+    if (checklistDraftInitTaskIdRef.current === task.id) return;
+    checklistDraftInitTaskIdRef.current = task.id;
+    const base: Record<string, { outcome: 0 | 1 | 2 | null; notes: string }> = {};
     for (const item of task.checklistItems) {
       const outcome = item.result ? item.result.outcome : null;
       const notes = item.result?.notes ?? '';
-      next[item.id] = { outcome, notes };
+      base[item.id] = { outcome, notes };
     }
-    setChecklistDraft(next);
+
+    const stored = parseChecklistDraft(sessionStorage.getItem(checklistDraftStorageKey(task.id)) ?? '');
+    if (!stored) {
+      setChecklistDraft(base);
+      return;
+    }
+    const merged: Record<string, { outcome: 0 | 1 | 2 | null; notes: string }> = {};
+    for (const [id, serverValue] of Object.entries(base)) {
+      const localValue = stored[id];
+      merged[id] = localValue ?? serverValue;
+    }
+    setChecklistDraft(merged);
   }, [task?.id]);
+
+  useEffect(() => {
+    if (!task) return;
+    try {
+      sessionStorage.setItem(checklistDraftStorageKey(task.id), JSON.stringify(checklistDraft));
+    } catch {
+      return;
+    }
+  }, [task?.id, checklistDraft]);
 
   useEffect(() => {
     return () => {
@@ -151,6 +215,33 @@ const TaskDetail: React.FC = () => {
     panRef.current = null;
     pinchRef.current = null;
   }, [previewOpen, previewUrl]);
+
+  useEffect(() => {
+    if (!assignOpen) return;
+    let cancelled = false;
+    setAssignOptionsLoading(true);
+    setAssignError(null);
+    void (async () => {
+      try {
+        const [lookups, users] = await Promise.all([
+          apiGetLookups(),
+          apiListAssignableUsers({ page: 1, pageSize: 200, isActive: true }),
+        ]);
+        if (cancelled) return;
+        setAssignRoles(lookups.roles ?? []);
+        setAssignUsers(users.items ?? []);
+      } catch (e) {
+        if (cancelled) return;
+        const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to load assignees';
+        setAssignError(message);
+      } finally {
+        if (!cancelled) setAssignOptionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assignOpen]);
 
   const formatDueAt = (value: string): string => {
     const d = new Date(value);
@@ -344,13 +435,14 @@ const TaskDetail: React.FC = () => {
   const roles = user?.roles ?? [];
   const isSuperadmin = roles.includes('Superadmin');
   const isManager = roles.includes('Supervisor') || roles.includes('Admin') || roles.includes('Superadmin');
+  const canAssign = isManager;
   const canEditChecklist =
     ((!isManager && !isApprovalLocked) || (isSuperadmin && approvalStatus === 'PendingSuperadmin')) &&
     statusLower !== 'completed' &&
     statusLower !== 'cancelled';
-  const canStart = statusLower === 'open';
-  const canPause = statusLower === 'in_progress';
-  const canResume = statusLower === 'paused';
+  const canStart = statusLower === 'open' && !isApprovalLocked;
+  const canPause = statusLower === 'in_progress' && !isApprovalLocked;
+  const canResume = statusLower === 'paused' && !isApprovalLocked;
 
   const canReview = useMemo(() => {
     if (approvalStatus === 'PendingSupervisor') {
@@ -362,7 +454,7 @@ const TaskDetail: React.FC = () => {
     return false;
   }, [approvalStatus, roles]);
 
-  const canSubmitForApproval = Boolean(task) && !isManager && !isApprovalLocked && statusLower !== 'completed' && statusLower !== 'cancelled';
+  const canSubmitForApproval = Boolean(task) && !isManager && !isApprovalLocked && statusLower === 'in_progress';
 
   const onApprove = async (): Promise<void> => {
     if (!task) return;
@@ -429,6 +521,63 @@ const TaskDetail: React.FC = () => {
     }
   };
 
+  const assignedLabel = task?.assignedTo.displayName ?? task?.assignedTo.roleName ?? 'Unassigned';
+  const assignButtonLabel = task?.assignedTo.userId || task?.assignedTo.roleId ? 'Reassign' : 'Assign';
+
+  const openAssign = (): void => {
+    if (!task) return;
+    if (task.assignedTo.userId) {
+      setAssignMode('user');
+      setAssignUserId(task.assignedTo.userId);
+      setAssignRoleId('');
+    } else if (task.assignedTo.roleId) {
+      setAssignMode('role');
+      setAssignRoleId(task.assignedTo.roleId);
+      setAssignUserId('');
+    } else {
+      setAssignMode('unassigned');
+      setAssignUserId('');
+      setAssignRoleId('');
+    }
+    setAssignError(null);
+    setAssignOpen(true);
+  };
+
+  const sortedAssignUsers = useMemo(() => {
+    return assignUsers
+      .slice()
+      .sort((a, b) => (a.displayName ?? a.username).localeCompare(b.displayName ?? b.username));
+  }, [assignUsers]);
+
+  const sortedAssignRoles = useMemo(() => {
+    return assignRoles.slice().sort((a, b) => a.name.localeCompare(b.name));
+  }, [assignRoles]);
+
+  const onAssign = async (): Promise<void> => {
+    if (!task) return;
+    setAssignLoading(true);
+    setAssignError(null);
+    try {
+      if (assignMode === 'user') {
+        if (!assignUserId) throw new Error('Select technician');
+        await apiAssignTask({ taskId: task.id, assignedToUserId: assignUserId, assignedToRoleId: null });
+      } else if (assignMode === 'role') {
+        if (!assignRoleId) throw new Error('Select role');
+        await apiAssignTask({ taskId: task.id, assignedToRoleId: assignRoleId, assignedToUserId: null });
+      } else {
+        await apiAssignTask({ taskId: task.id, assignedToUserId: null, assignedToRoleId: null });
+      }
+      const refreshed = await apiGetTask(task.id);
+      setTask(refreshed);
+      setAssignOpen(false);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to assign';
+      setAssignError(message);
+    } finally {
+      setAssignLoading(false);
+    }
+  };
+
   const buildChecklistResults = (): CompleteTaskChecklistResultInput[] => {
     const items = task?.checklistItems ?? [];
     const results: CompleteTaskChecklistResultInput[] = [];
@@ -479,6 +628,7 @@ const TaskDetail: React.FC = () => {
 
   const onPause = async (): Promise<void> => {
     if (!task) return;
+    if (!canPause) return;
     setActionLoading(true);
     try {
       await apiPauseTask(task.id);
@@ -493,6 +643,7 @@ const TaskDetail: React.FC = () => {
 
   const onResume = async (): Promise<void> => {
     if (!task) return;
+    if (!canResume) return;
     setActionLoading(true);
     try {
       await apiResumeTask(task.id);
@@ -507,6 +658,10 @@ const TaskDetail: React.FC = () => {
 
   const onSubmitForApproval = async (): Promise<void> => {
     if (!task) return;
+    if (!canSubmitForApproval) {
+      setError('Resume task before submitting for approval');
+      return;
+    }
     setActionLoading(true);
     try {
       const checklistResults = buildChecklistResults();
@@ -648,6 +803,18 @@ const TaskDetail: React.FC = () => {
           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 uppercase tracking-wider">
             Priority: {task.priority}
           </span>
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700">
+            {assignedLabel}
+          </span>
+          {canAssign ? (
+            <button
+              type="button"
+              onClick={openAssign}
+              className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700"
+            >
+              {assignButtonLabel}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -754,7 +921,7 @@ const TaskDetail: React.FC = () => {
                   const isDone = outcome !== null;
                   const isSkipped = outcome === 0;
                   const badge = item.isMandatory ? 'Required' : 'Optional';
-                  const hasCamera = item.enableAttachment;
+                  const hasAttachment = item.enableAttachment;
 
                   return (
                     <div key={item.id} className={`rounded-lg border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 ${isDone ? 'opacity-90' : ''}`}>
@@ -797,7 +964,7 @@ const TaskDetail: React.FC = () => {
                             </div>
                           ) : null}
                         </div>
-                        {hasCamera ? (
+                        {hasAttachment ? (
                           <button
                             type="button"
                             disabled={uploading || !canEditChecklist}
@@ -806,9 +973,9 @@ const TaskDetail: React.FC = () => {
                               triggerChecklistUpload(item.id);
                             }}
                             className="size-10 rounded-full flex items-center justify-center hover:bg-slate-50 dark:hover:bg-slate-800"
-                            aria-label="Add photo"
+                            aria-label="Attach file"
                           >
-                            <span className="material-symbols-outlined text-slate-500">photo_camera</span>
+                            <span className="material-symbols-outlined text-slate-500">attach_file</span>
                           </button>
                         ) : null}
                       </div>
@@ -891,6 +1058,136 @@ const TaskDetail: React.FC = () => {
           </div>
         </section>
       </main>
+
+      {assignOpen ? (
+        <div className="fixed inset-0 z-[60]">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setAssignOpen(false)}
+            className="absolute inset-0 bg-black/30"
+          />
+          <div className="absolute inset-x-0 bottom-0 bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-4 pb-8">
+            <div className="max-w-screen-sm mx-auto space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Assign Task</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">{task.taskNumber}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssignOpen(false)}
+                  className="size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center"
+                  aria-label="Close"
+                >
+                  <span className="material-symbols-outlined text-slate-600 dark:text-slate-300">close</span>
+                </button>
+              </div>
+
+              {assignError ? (
+                <div className="bg-rose-50 dark:bg-rose-950/30 rounded-xl border border-rose-200 dark:border-rose-900 p-3 text-sm text-rose-700 dark:text-rose-300">
+                  {assignError}
+                </div>
+              ) : null}
+
+              {assignOptionsLoading ? (
+                <div className="text-sm text-slate-500 dark:text-slate-400">Loading assignees…</div>
+              ) : null}
+
+              <div className="grid grid-cols-12 gap-2">
+                <label className="col-span-12 md:col-span-4 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <input
+                    type="radio"
+                    name="assign-mode"
+                    value="user"
+                    checked={assignMode === 'user'}
+                    onChange={() => setAssignMode('user')}
+                    className="size-4"
+                  />
+                  User
+                </label>
+                <label className="col-span-12 md:col-span-4 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <input
+                    type="radio"
+                    name="assign-mode"
+                    value="role"
+                    checked={assignMode === 'role'}
+                    onChange={() => setAssignMode('role')}
+                    className="size-4"
+                  />
+                  Role
+                </label>
+                <label className="col-span-12 md:col-span-4 flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <input
+                    type="radio"
+                    name="assign-mode"
+                    value="unassigned"
+                    checked={assignMode === 'unassigned'}
+                    onChange={() => setAssignMode('unassigned')}
+                    className="size-4"
+                  />
+                  Unassign
+                </label>
+              </div>
+
+              {assignMode === 'user' ? (
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Technician</label>
+                  <select
+                    value={assignUserId}
+                    onChange={(e) => setAssignUserId(e.target.value)}
+                    className="mt-2 w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm"
+                    disabled={assignOptionsLoading}
+                  >
+                    <option value="">Select technician</option>
+                    {sortedAssignUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.displayName ?? u.username}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : assignMode === 'role' ? (
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Role</label>
+                  <select
+                    value={assignRoleId}
+                    onChange={(e) => setAssignRoleId(e.target.value)}
+                    className="mt-2 w-full h-11 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm"
+                    disabled={assignOptionsLoading}
+                  >
+                    <option value="">Select role</option>
+                    {sortedAssignRoles.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={assignLoading}
+                  onClick={() => setAssignOpen(false)}
+                  className="flex-1 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={assignLoading || assignOptionsLoading}
+                  onClick={() => void onAssign()}
+                  className="flex-1 h-12 rounded-xl bg-primary text-white font-bold disabled:opacity-60"
+                >
+                  {assignButtonLabel}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {previewOpen ? (
         <div className="fixed inset-0 z-[70] bg-black flex flex-col">
@@ -1085,15 +1382,15 @@ const TaskDetail: React.FC = () => {
       ) : null}
 
       {/* Floating Action Buttons */}
-      <input ref={checklistFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onChecklistFileSelected} />
-      <input ref={taskFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onTaskFileSelected} />
+      <input ref={checklistFileInputRef} type="file" className="hidden" onChange={onChecklistFileSelected} />
+      <input ref={taskFileInputRef} type="file" className="hidden" onChange={onTaskFileSelected} />
 
       <div className="fixed bottom-32 right-4 flex flex-col gap-3 z-40">
         <button className="size-14 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 active:scale-95 transition-transform">
           <span className="material-symbols-outlined">add_comment</span>
         </button>
         <button disabled={uploading || !canEditChecklist} onClick={triggerTaskUpload} className="size-14 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 active:scale-95 transition-transform">
-          <span className="material-symbols-outlined">photo_camera</span>
+          <span className="material-symbols-outlined">attach_file</span>
         </button>
       </div>
 

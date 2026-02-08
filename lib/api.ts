@@ -357,8 +357,32 @@ export type LookupsResponse = {
   locations: LookupLocation[];
 };
 
+export type UserSummary = {
+  id: string;
+  username: string;
+  displayName: string | null;
+  roles: string[];
+};
+
+export type ListUsersResponse = { page: number; pageSize: number; total: number; items: UserSummary[] };
+
 export const apiGetLookups = async (): Promise<LookupsResponse> => {
   return apiGet<LookupsResponse>("/api/system/lookups");
+};
+
+export const apiListAssignableUsers = async (input: {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  isActive?: boolean;
+}): Promise<ListUsersResponse> => {
+  const params = new URLSearchParams();
+  if (input.page) params.set("page", String(input.page));
+  if (input.pageSize) params.set("pageSize", String(input.pageSize));
+  if (input.search) params.set("search", input.search);
+  if (input.isActive !== undefined) params.set("isActive", input.isActive ? "true" : "false");
+  const query = params.toString();
+  return apiGet<ListUsersResponse>(`/api/system/users/for-assignment${query ? `?${query}` : ""}`);
 };
 
 export type AssetsUiSettingsResponse = {
@@ -704,6 +728,17 @@ export const apiGetTask = async (taskId: string): Promise<TaskDetail> => {
   return apiGet<TaskDetail>(`/api/tasks/${taskId}`);
 };
 
+export const apiAssignTask = async (input: {
+  taskId: string;
+  assignedToUserId?: string | null;
+  assignedToRoleId?: string | null;
+}): Promise<{ ok: true }> => {
+  const body: { assignedToUserId?: string | null; assignedToRoleId?: string | null } = {};
+  if (Object.prototype.hasOwnProperty.call(input, "assignedToUserId")) body.assignedToUserId = input.assignedToUserId ?? null;
+  if (Object.prototype.hasOwnProperty.call(input, "assignedToRoleId")) body.assignedToRoleId = input.assignedToRoleId ?? null;
+  return apiPost<{ ok: true }>(`/api/tasks/${encodeURIComponent(input.taskId)}/assign`, body);
+};
+
 export const apiListTasks = async (input: {
   status?: string;
   assigned?: "me" | "unassigned" | "any";
@@ -874,6 +909,17 @@ export const apiListWorkOrders = async (input: {
 
 export const apiGetWorkOrder = async (taskId: string): Promise<WorkOrderDetail> => {
   return apiGet<WorkOrderDetail>(`/api/work-orders/${taskId}`);
+};
+
+export const apiAssignWorkOrder = async (input: {
+  taskId: string;
+  assignedToUserId?: string | null;
+  assignedToRoleId?: string | null;
+}): Promise<{ ok: true }> => {
+  const body: { assignedToUserId?: string | null; assignedToRoleId?: string | null } = {};
+  if (Object.prototype.hasOwnProperty.call(input, "assignedToUserId")) body.assignedToUserId = input.assignedToUserId ?? null;
+  if (Object.prototype.hasOwnProperty.call(input, "assignedToRoleId")) body.assignedToRoleId = input.assignedToRoleId ?? null;
+  return apiPost<{ ok: true }>(`/api/work-orders/${encodeURIComponent(input.taskId)}/assign`, body);
 };
 
 export const apiCreateWorkOrder = async (input: {
