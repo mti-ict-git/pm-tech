@@ -30,6 +30,7 @@ const TaskDetail: React.FC = () => {
   const { user } = useAuth();
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [assetImageUrl, setAssetImageUrl] = useState<string | null>(null);
+  const [assetNotes, setAssetNotes] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
@@ -49,6 +50,20 @@ const TaskDetail: React.FC = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewFileName, setPreviewFileName] = useState<string | null>(null);
   const [previewContentType, setPreviewContentType] = useState<string | null>(null);
+  const previewViewportRef = useRef<HTMLDivElement | null>(null);
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const panRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null);
+  const pinchRef = useRef<{
+    startDistance: number;
+    startScale: number;
+    startX: number;
+    startY: number;
+    centerX: number;
+    centerY: number;
+  } | null>(null);
+  const [previewScale, setPreviewScale] = useState(1);
+  const [previewTranslateX, setPreviewTranslateX] = useState(0);
+  const [previewTranslateY, setPreviewTranslateY] = useState(0);
   const checklistUploadItemIdRef = useRef<string | null>(null);
   const checklistFileInputRef = useRef<HTMLInputElement | null>(null);
   const taskFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -75,6 +90,7 @@ const TaskDetail: React.FC = () => {
     const assetId = task?.asset?.id;
     if (!assetId) {
       setAssetImageUrl(null);
+      setAssetNotes(null);
       return;
     }
     let active = true;
@@ -84,6 +100,9 @@ const TaskDetail: React.FC = () => {
       try {
         const asset = await apiGetAsset(assetId);
         if (!active) return;
+
+        const notes = asset?.snipeNotes?.trim() ? asset.snipeNotes.trim() : null;
+        setAssetNotes(notes);
 
         const directUrl = asset?.imageUrl?.trim() ? asset.imageUrl : null;
         if (directUrl) {
@@ -123,6 +142,16 @@ const TaskDetail: React.FC = () => {
     };
   }, [previewUrl]);
 
+  useEffect(() => {
+    if (!previewOpen) return;
+    setPreviewScale(1);
+    setPreviewTranslateX(0);
+    setPreviewTranslateY(0);
+    pointersRef.current.clear();
+    panRef.current = null;
+    pinchRef.current = null;
+  }, [previewOpen, previewUrl]);
+
   const formatDueAt = (value: string): string => {
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return value;
@@ -158,6 +187,110 @@ const TaskDetail: React.FC = () => {
     setPreviewUrl(null);
     setPreviewFileName(null);
     setPreviewContentType(null);
+    setPreviewScale(1);
+    setPreviewTranslateX(0);
+    setPreviewTranslateY(0);
+    pointersRef.current.clear();
+    panRef.current = null;
+    pinchRef.current = null;
+  };
+
+  const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
+
+  const clampTranslation = (x: number, y: number, scale: number): { x: number; y: number } => {
+    const el = previewViewportRef.current;
+    if (!el) return { x, y };
+    const rect = el.getBoundingClientRect();
+    const maxX = (rect.width * (scale - 1)) / 2;
+    const maxY = (rect.height * (scale - 1)) / 2;
+    return { x: clamp(x, -maxX, maxX), y: clamp(y, -maxY, maxY) };
+  };
+
+  const getTwoPointers = (): [{ x: number; y: number }, { x: number; y: number }] | null => {
+    const points = Array.from(pointersRef.current.values());
+    if (points.length !== 2) return null;
+    return [points[0], points[1]];
+  };
+
+  const onPreviewPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 1) {
+      panRef.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+    }
+
+    if (pointersRef.current.size === 2) {
+      panRef.current = null;
+      const pts = getTwoPointers();
+      const viewport = previewViewportRef.current;
+      if (!pts || !viewport) return;
+      const rect = viewport.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const dx = pts[0].x - pts[1].x;
+      const dy = pts[0].y - pts[1].y;
+      pinchRef.current = {
+        startDistance: Math.hypot(dx, dy),
+        startScale: previewScale,
+        startX: previewTranslateX,
+        startY: previewTranslateY,
+        centerX,
+        centerY,
+      };
+    }
+  };
+
+  const onPreviewPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (!pointersRef.current.has(e.pointerId)) return;
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (pointersRef.current.size === 2) {
+      const pinch = pinchRef.current;
+      const pts = getTwoPointers();
+      if (!pinch || !pts) return;
+      const dx = pts[0].x - pts[1].x;
+      const dy = pts[0].y - pts[1].y;
+      const distance = Math.hypot(dx, dy);
+      const ratio = pinch.startDistance > 0 ? distance / pinch.startDistance : 1;
+      const nextScale = clamp(pinch.startScale * ratio, 1, 4);
+
+      const midX = (pts[0].x + pts[1].x) / 2;
+      const midY = (pts[0].y + pts[1].y) / 2;
+      const relativeX = midX - pinch.centerX;
+      const relativeY = midY - pinch.centerY;
+      const scaleRatio = pinch.startScale > 0 ? nextScale / pinch.startScale : 1;
+      const rawX = pinch.startX + relativeX * (1 - scaleRatio);
+      const rawY = pinch.startY + relativeY * (1 - scaleRatio);
+      const clamped = clampTranslation(rawX, rawY, nextScale);
+
+      setPreviewScale(nextScale);
+      setPreviewTranslateX(clamped.x);
+      setPreviewTranslateY(clamped.y);
+      return;
+    }
+
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== e.pointerId) return;
+    if (previewScale <= 1) {
+      panRef.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+      return;
+    }
+    const dx = e.clientX - pan.lastX;
+    const dy = e.clientY - pan.lastY;
+    const rawX = previewTranslateX + dx;
+    const rawY = previewTranslateY + dy;
+    const clamped = clampTranslation(rawX, rawY, previewScale);
+    setPreviewTranslateX(clamped.x);
+    setPreviewTranslateY(clamped.y);
+    panRef.current = { pointerId: e.pointerId, lastX: e.clientX, lastY: e.clientY };
+  };
+
+  const onPreviewPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
+    pointersRef.current.delete(e.pointerId);
+    if (panRef.current?.pointerId === e.pointerId) panRef.current = null;
+    if (pointersRef.current.size < 2) pinchRef.current = null;
   };
 
   const openChecklistEvidence = async (e: TaskChecklistEvidence): Promise<void> => {
@@ -567,12 +700,27 @@ const TaskDetail: React.FC = () => {
               </div>
             </div>
             <div className="p-4">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{task.asset.name}</h2>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                <button
+                  type="button"
+                  onClick={() => navigate(`/asset/${encodeURIComponent(task.asset.id)}`)}
+                  className="w-full text-left underline decoration-slate-300 dark:decoration-slate-700 underline-offset-4 transition-opacity active:opacity-70"
+                  aria-label="Open asset details"
+                >
+                  {task.asset.name}
+                </button>
+              </h2>
               <div className="mt-2 space-y-2">
                 <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                   <span className="material-symbols-outlined text-sm">location_on</span>
                   <span className="text-sm">{task.facility?.name ?? ''}</span>
                 </div>
+                {assetNotes ? (
+                  <div className="flex items-start gap-2 text-slate-600 dark:text-slate-400">
+                    <span className="material-symbols-outlined text-sm mt-0.5">description</span>
+                    <span className="text-sm whitespace-pre-wrap break-words">{assetNotes}</span>
+                  </div>
+                ) : null}
                 <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                   <span className="material-symbols-outlined text-sm">history</span>
                   <span className="text-sm">Scheduled: {formatDueAt(task.scheduledDueAt)}</span>
@@ -745,55 +893,62 @@ const TaskDetail: React.FC = () => {
       </main>
 
       {previewOpen ? (
-        <div className="fixed inset-0 z-[70]">
-          <button
-            type="button"
-            aria-label="Close preview"
-            onClick={closePreview}
-            className="absolute inset-0 bg-black/60"
-          />
-          <div className="absolute inset-x-0 bottom-0 max-h-[85vh] bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-4 pb-8">
-            <div className="max-w-screen-sm mx-auto space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Attachment</p>
-                  <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{previewFileName ?? 'Preview'}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={closePreview}
-                  className="size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center"
-                  aria-label="Close"
+        <div className="fixed inset-0 z-[70] bg-black flex flex-col">
+          <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-white/60 uppercase tracking-wider">Attachment</p>
+              <p className="text-sm font-bold text-white truncate">{previewFileName ?? 'Preview'}</p>
+            </div>
+            <button
+              type="button"
+              onClick={closePreview}
+              className="size-10 rounded-full hover:bg-white/10 flex items-center justify-center"
+              aria-label="Close"
+            >
+              <span className="material-symbols-outlined text-white">close</span>
+            </button>
+          </div>
+
+          <div className="flex-1 p-3">
+            <div className="h-full w-full rounded-xl overflow-hidden bg-black">
+              {previewLoading ? (
+                <div className="h-full flex items-center justify-center text-sm text-white/70">Loading…</div>
+              ) : !previewUrl ? (
+                <div className="h-full flex items-center justify-center text-sm text-white/70">Preview not available.</div>
+              ) : (previewContentType ?? '').includes('pdf') || (previewFileName ?? '').toLowerCase().endsWith('.pdf') ? (
+                <iframe title={previewFileName ?? 'Preview'} src={previewUrl} className="w-full h-full bg-white" />
+              ) : (previewContentType ?? '').startsWith('image/') || (previewFileName ?? '').toLowerCase().match(/\.(png|jpg|jpeg)$/) ? (
+                <div
+                  ref={previewViewportRef}
+                  className="h-full w-full overflow-hidden bg-black flex items-center justify-center"
+                  style={{ touchAction: 'none' }}
+                  onPointerDown={onPreviewPointerDown}
+                  onPointerMove={onPreviewPointerMove}
+                  onPointerUp={onPreviewPointerUp}
+                  onPointerCancel={onPreviewPointerUp}
                 >
-                  <span className="material-symbols-outlined text-slate-600 dark:text-slate-300">close</span>
-                </button>
-              </div>
-              <div className="bg-slate-100 dark:bg-slate-800 rounded-xl p-3">
-                {previewLoading ? (
-                  <div className="h-64 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">Loading…</div>
-                ) : !previewUrl ? (
-                  <div className="h-64 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">Preview not available.</div>
-                ) : (previewContentType ?? '').includes('pdf') || (previewFileName ?? '').toLowerCase().endsWith('.pdf') ? (
-                  <iframe title={previewFileName ?? 'Preview'} src={previewUrl} className="w-full h-64 rounded-lg bg-white" />
-                ) : (previewContentType ?? '').startsWith('image/') || (previewFileName ?? '').toLowerCase().match(/\.(png|jpg|jpeg)$/) ? (
-                  <div className="h-64 flex items-center justify-center">
-                    <img src={previewUrl} alt={previewFileName ?? 'Attachment'} className="max-h-64 max-w-full object-contain" />
-                  </div>
-                ) : (previewContentType ?? '').startsWith('video/') || (previewFileName ?? '').toLowerCase().match(/\.(mp4|mov|m4v)$/) ? (
-                  <div className="h-64 flex items-center justify-center">
-                    <video src={previewUrl} controls className="max-h-64 max-w-full rounded-lg" />
-                  </div>
-                ) : (previewContentType ?? '').startsWith('audio/') || (previewFileName ?? '').toLowerCase().match(/\.(mp3|wav|m4a)$/) ? (
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate w-full text-center">
-                      {previewFileName ?? 'Audio'}
-                    </div>
-                    <audio src={previewUrl} controls className="w-full" />
-                  </div>
-                ) : (
-                  <div className="h-64 flex items-center justify-center text-sm text-slate-500 dark:text-slate-400">Preview not available.</div>
-                )}
-              </div>
+                  <img
+                    src={previewUrl}
+                    alt={previewFileName ?? 'Attachment'}
+                    draggable={false}
+                    className="max-h-full max-w-full select-none"
+                    style={{
+                      transform: `translate(${previewTranslateX}px, ${previewTranslateY}px) scale(${previewScale})`,
+                      transformOrigin: 'center center',
+                      willChange: 'transform',
+                    }}
+                  />
+                </div>
+              ) : (previewContentType ?? '').startsWith('video/') || (previewFileName ?? '').toLowerCase().match(/\.(mp4|mov|m4v)$/) ? (
+                <video src={previewUrl} controls className="w-full h-full" />
+              ) : (previewContentType ?? '').startsWith('audio/') || (previewFileName ?? '').toLowerCase().match(/\.(mp3|wav|m4a)$/) ? (
+                <div className="h-full w-full flex flex-col items-center justify-center gap-4 p-6">
+                  <div className="text-xs text-white/70 truncate w-full text-center">{previewFileName ?? 'Audio'}</div>
+                  <audio src={previewUrl} controls className="w-full" />
+                </div>
+              ) : (
+                <div className="h-full flex items-center justify-center text-sm text-white/70">Preview not available.</div>
+              )}
             </div>
           </div>
         </div>
