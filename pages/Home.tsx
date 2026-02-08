@@ -165,7 +165,7 @@ const Home: React.FC = () => {
             <div className="bg-primary p-1.5 rounded-lg flex items-center justify-center">
               <span className="material-symbols-outlined text-white text-[20px]">engineering</span>
             </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">PM</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">OPTIMA Mobile</h1>
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 bg-primary/10 dark:bg-primary/20 px-2 py-1 rounded-full">
