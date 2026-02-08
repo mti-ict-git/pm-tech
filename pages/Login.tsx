@@ -78,8 +78,8 @@ const Login: React.FC = () => {
           <div className="w-20 h-20 bg-primary/20 backdrop-blur-md rounded-3xl flex items-center justify-center shadow-2xl shadow-primary/30 mb-3 border border-white/10">
             <img src={logoUrl} alt="PM Tech" className="w-12 h-12 object-contain" />
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-md">PM Tech</h1>
-          <p className="text-blue-100 font-medium text-xs mt-1 tracking-wide drop-shadow-sm">Preventive Maintenance Simplified</p>
+          <h1 className="text-3xl font-bold text-white tracking-tight drop-shadow-md">ICT Mobile PM System</h1>
+          <p className="text-blue-100 font-medium text-xs mt-1 tracking-wide drop-shadow-sm">PT. Merdeka Tsingshan Indonesia</p>
         </div>
       </div>
 
