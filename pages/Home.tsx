@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFindAssetIdByTag, apiGetDashboardOverview, apiListApprovalInbox, getMe, type ApprovalInboxItem, type ApprovalInboxStage, type DashboardOverview, type User } from '../lib/api';
+import { scanQrCodeValue } from '../lib/qr';
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
@@ -14,7 +15,6 @@ const Home: React.FC = () => {
   const [approvalsLoading, setApprovalsLoading] = useState(false);
   const [approvalsError, setApprovalsError] = useState<string | null>(null);
 
-  const [scanSupported, setScanSupported] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
 
   useEffect(() => {
@@ -34,62 +34,19 @@ const Home: React.FC = () => {
     void load();
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    const load = async (): Promise<void> => {
-      try {
-        const { Capacitor } = await import('@capacitor/core');
-        if (!Capacitor.isNativePlatform()) {
-          if (active) setScanSupported(false);
-          return;
-        }
-        const { BarcodeScanner } = await import('@capacitor-mlkit/barcode-scanning');
-        const { supported } = await BarcodeScanner.isSupported();
-        if (active) setScanSupported(Boolean(supported));
-      } catch {
-        if (active) setScanSupported(false);
-      }
-    };
-    void load();
-    return () => {
-      active = false;
-    };
-  }, []);
-
   const onScanQr = async (): Promise<void> => {
     setScanLoading(true);
     setError(null);
     try {
-      const { Capacitor } = await import('@capacitor/core');
-      if (!Capacitor.isNativePlatform()) {
-        setError('QR scan is only available on Android app');
+      const scan = await scanQrCodeValue();
+      if (scan.ok === false) {
+        setError(scan.message);
         return;
       }
 
-      const { BarcodeScanner, BarcodeFormat } = await import('@capacitor-mlkit/barcode-scanning');
-      const { supported } = await BarcodeScanner.isSupported();
-      if (!supported) {
-        setError('QR scan is not supported on this device');
-        return;
-      }
-
-      const perms = await BarcodeScanner.requestPermissions();
-      if (perms.camera !== 'granted' && perms.camera !== 'limited') {
-        setError('Camera permission is required to scan QR');
-        return;
-      }
-
-      const res = await BarcodeScanner.scan({ formats: [BarcodeFormat.QrCode] });
-      const first = res.barcodes[0];
-      const tag = first?.rawValue?.trim() ?? '';
-      if (!tag) {
-        setError('No QR detected');
-        return;
-      }
-
-      const assetId = await apiFindAssetIdByTag(tag);
+      const assetId = await apiFindAssetIdByTag(scan.value);
       if (!assetId) {
-        setError(`Asset not found for tag: ${tag}`);
+        setError(`Asset not found for tag: ${scan.value}`);
         return;
       }
       navigate(`/asset/${assetId}`);
@@ -371,7 +328,7 @@ const Home: React.FC = () => {
                       : `Maintenance window exceeded for ${overdueCount} asset${overdueCount === 1 ? '' : 's'}. Safety risks identified.`}
                   </p>
                   <button
-                    onClick={() => navigate('/tasks')}
+                    onClick={() => navigate('/tasks?tab=overdue')}
                     className="mt-2 inline-flex items-center justify-center rounded-full bg-white text-red-600 text-sm font-semibold px-4 py-2"
                   >
                     Resolve Now
@@ -389,7 +346,7 @@ const Home: React.FC = () => {
             <button
               type="button"
               onClick={() => void onScanQr()}
-              disabled={!scanSupported || scanLoading}
+              disabled={scanLoading}
               className="flex items-center gap-3 p-4 bg-primary text-white rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <span className="material-symbols-outlined">qr_code_scanner</span>

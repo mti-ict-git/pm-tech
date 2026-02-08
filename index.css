@@ -17,3 +17,24 @@
 .hide-scrollbar::-webkit-scrollbar { display: none; }
 .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 .ios-bottom-blur { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+
+@keyframes pm-page-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.pm-page-enter {
+  animation: pm-page-enter 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pm-page-enter {
+    animation: none;
+  }
+}

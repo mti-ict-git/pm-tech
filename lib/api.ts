@@ -216,6 +216,10 @@ export const getMe = async (): Promise<User> => {
   return res.user;
 };
 
+export const apiRegisterDevice = async (input: { platform: string; token: string }): Promise<{ ok: true }> => {
+  return apiPost<{ ok: true }>("/api/devices/register", input);
+};
+
 export type AssetOperationalStatus = "operational" | "broken" | "archived";
 export type Asset = {
   id: string;

@@ -25,6 +25,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1CobEZxXeyTrGD39Ld8JWef
 - Facilities list with search and location filters
 - View checklist evidence attachments from PM history tasks
 - Supervisors can run PM Now from Asset Detail
+- Scan QR (asset tag) to open the Asset Detail
 
 ## Android (Capacitor)
 

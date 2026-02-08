@@ -1,14 +1,33 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { apiGetTaskStatusCounts, apiListTasks, type TaskListItem, type TaskStatusCountsResponse } from '../lib/api';
 
 const Tasks: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [tab, setTab] = useState<'all' | 'in_progress' | 'upcoming' | 'due_today' | 'overdue' | 'completed'>('all');
   const [items, setItems] = useState<TaskListItem[]>([]);
   const [counts, setCounts] = useState<TaskStatusCountsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  type TabKey = 'all' | 'in_progress' | 'upcoming' | 'due_today' | 'overdue' | 'completed';
+
+  const parseTabFromSearch = (search: string): TabKey => {
+    const raw = new URLSearchParams(search).get('tab');
+    if (raw === 'in_progress' || raw === 'upcoming' || raw === 'due_today' || raw === 'overdue' || raw === 'completed' || raw === 'all') return raw;
+    return 'all';
+  };
+
+  const setTabAndUrl = (next: TabKey): void => {
+    setTab(next);
+    navigate(`/tasks?tab=${encodeURIComponent(next)}`, { replace: true });
+  };
+
+  useEffect(() => {
+    const next = parseTabFromSearch(location.search);
+    setTab((prev) => (prev === next ? prev : next));
+  }, [location.search]);
 
   const startOfDayIso = (d: Date): string => {
     const x = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
@@ -142,37 +161,37 @@ const Tasks: React.FC = () => {
           </div>
         </div>
         <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-2">
-          <button onClick={() => { setTab('all'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'all' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+          <button onClick={() => { setTabAndUrl('all'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'all' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
             <span>All</span>
             <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold inline-flex items-center justify-center ${badgeClass('all')}`}>
               {counts?.all ?? 0}
             </span>
           </button>
-          <button onClick={() => { setTab('in_progress'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'in_progress' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+          <button onClick={() => { setTabAndUrl('in_progress'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'in_progress' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
             <span>In Progress</span>
             <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold inline-flex items-center justify-center ${badgeClass('in_progress')}`}>
               {counts?.inProgress ?? 0}
             </span>
           </button>
-          <button onClick={() => { setTab('due_today'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'due_today' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+          <button onClick={() => { setTabAndUrl('due_today'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'due_today' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
             <span>Due Today</span>
             <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold inline-flex items-center justify-center ${badgeClass('due_today')}`}>
               {counts?.dueToday ?? 0}
             </span>
           </button>
-          <button onClick={() => { setTab('upcoming'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'upcoming' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+          <button onClick={() => { setTabAndUrl('upcoming'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'upcoming' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
             <span>Upcoming</span>
             <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold inline-flex items-center justify-center ${badgeClass('upcoming')}`}>
               {counts?.upcoming ?? 0}
             </span>
           </button>
-          <button onClick={() => { setTab('overdue'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'overdue' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+          <button onClick={() => { setTabAndUrl('overdue'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'overdue' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
             <span>Overdue</span>
             <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold inline-flex items-center justify-center ${badgeClass('overdue')}`}>
               {counts?.overdue ?? 0}
             </span>
           </button>
-          <button onClick={() => { setTab('completed'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'completed' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+          <button onClick={() => { setTabAndUrl('completed'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'completed' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
             <span>Completed</span>
             <span className={`min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-bold inline-flex items-center justify-center ${badgeClass('completed')}`}>
               {counts?.completed ?? 0}

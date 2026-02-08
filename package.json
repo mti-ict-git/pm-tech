@@ -9,10 +9,11 @@
     "cap:add:android": "cap add android",
     "cap:sync:android": "cap sync android",
     "cap:open:android": "cap open android",
-    "build:android": "vite build && cap sync android && cap open android",
+    "build:android": "vite build && cap sync android",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/push-notifications": "^6.0.5",
     "@capacitor-mlkit/barcode-scanning": "^6.2.0",
     "@capacitor/android": "^6.1.2",
     "@capacitor/core": "^6.1.2",

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError, apiCreatePmNowTask, apiDownloadAssetImage, apiFindAssetIdByTag, apiGetAsset, apiGetAssetHistory, type Asset, type AssetHistoryItem } from '../lib/api';
 import { useAuth } from '../providers/AuthProvider';
+import { scanQrCodeValue } from '../lib/qr';
 
 const RECENT_ASSETS_KEY = 'pm_recent_assets_v1';
 
@@ -73,7 +74,6 @@ const AssetDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [pmNowLoading, setPmNowLoading] = useState(false);
 
-  const [scanSupported, setScanSupported] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
 
   useEffect(() => {
@@ -112,27 +112,6 @@ const AssetDetail: React.FC = () => {
     };
   }, [assetId]);
 
-  useEffect(() => {
-    let active = true;
-    const load = async (): Promise<void> => {
-      try {
-        const { Capacitor } = await import('@capacitor/core');
-        if (!Capacitor.isNativePlatform()) {
-          if (active) setScanSupported(false);
-          return;
-        }
-        const { BarcodeScanner } = await import('@capacitor-mlkit/barcode-scanning');
-        const { supported } = await BarcodeScanner.isSupported();
-        if (active) setScanSupported(Boolean(supported));
-      } catch {
-        if (active) setScanSupported(false);
-      }
-    };
-    void load();
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!assetId) return;
@@ -226,36 +205,15 @@ const AssetDetail: React.FC = () => {
     setScanLoading(true);
     setError(null);
     try {
-      const { Capacitor } = await import('@capacitor/core');
-      if (!Capacitor.isNativePlatform()) {
-        setError('QR scan is only available on Android app');
+      const scan = await scanQrCodeValue();
+      if (scan.ok === false) {
+        setError(scan.message);
         return;
       }
 
-      const { BarcodeScanner, BarcodeFormat } = await import('@capacitor-mlkit/barcode-scanning');
-      const { supported } = await BarcodeScanner.isSupported();
-      if (!supported) {
-        setError('QR scan is not supported on this device');
-        return;
-      }
-
-      const perms = await BarcodeScanner.requestPermissions();
-      if (perms.camera !== 'granted' && perms.camera !== 'limited') {
-        setError('Camera permission is required to scan QR');
-        return;
-      }
-
-      const res = await BarcodeScanner.scan({ formats: [BarcodeFormat.QrCode] });
-      const first = res.barcodes[0];
-      const tag = first?.rawValue?.trim() ?? '';
-      if (!tag) {
-        setError('No QR detected');
-        return;
-      }
-
-      const nextAssetId = await apiFindAssetIdByTag(tag);
+      const nextAssetId = await apiFindAssetIdByTag(scan.value);
       if (!nextAssetId) {
-        setError(`Asset not found for tag: ${tag}`);
+        setError(`Asset not found for tag: ${scan.value}`);
         return;
       }
       navigate(`/asset/${nextAssetId}`, { replace: true });
@@ -278,8 +236,8 @@ const AssetDetail: React.FC = () => {
           <button
             type="button"
             onClick={() => void onScanQr()}
-            disabled={!scanSupported || scanLoading}
-            className="text-slate-900 dark:text-white disabled:opacity-60 disabled:cursor-not-allowed"
+            disabled={scanLoading}
+            className="size-10 rounded-full flex items-center justify-center text-slate-900 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
             aria-label="Scan QR"
           >
             <span className="material-symbols-outlined">{scanLoading ? 'progress_activity' : 'qr_code_scanner'}</span>
@@ -293,7 +251,7 @@ const AssetDetail: React.FC = () => {
             {error}
           </div>
         )}
-        <div className="relative w-full aspect-video bg-slate-200 dark:bg-slate-800 rounded-xl overflow-hidden shadow-sm group flex items-center justify-center">
+        <div className="relative w-full aspect-video bg-white dark:bg-slate-900 rounded-xl overflow-hidden shadow-sm group flex items-center justify-center">
           {assetImageUrl ? (
             <img
               src={assetImageUrl}
@@ -352,14 +310,21 @@ const AssetDetail: React.FC = () => {
           <span>Breakdown</span>
         </button>
         {canPmNow ? (
-          <button
-            onClick={() => void onPmNow()}
-            disabled={pmNowLoading || pmNowDisabled}
-            className="col-span-12 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-sm border border-slate-200 dark:border-slate-800 transition-active active:scale-95 disabled:opacity-60"
-          >
-            <span className="material-symbols-outlined text-xl">flash_on</span>
-            <span>{pmNowLoading ? 'Starting…' : 'PM Now'}</span>
-          </button>
+          <div className="col-span-12">
+            <button
+              onClick={() => void onPmNow()}
+              disabled={pmNowLoading || pmNowDisabled}
+              className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-sm border border-slate-200 dark:border-slate-800 transition-active active:scale-95 disabled:opacity-60"
+            >
+              <span className="material-symbols-outlined text-xl">flash_on</span>
+              <span>{pmNowLoading ? 'Starting…' : 'PM Now'}</span>
+            </button>
+            {pmNowDisabled ? (
+              <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                Enable PM and set a default template to use PM Now.
+              </p>
+            ) : null}
+          </div>
         ) : null}
       </div>
 

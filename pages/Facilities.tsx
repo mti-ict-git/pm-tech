@@ -79,10 +79,18 @@ const Facilities: React.FC = () => {
 
   return (
     <div className="bg-background-light dark:bg-background-dark min-h-screen pb-24">
-      {menuOpen && (
-        <div className="fixed inset-0 z-[60]">
-          <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setMenuOpen(false)} />
-          <div className="absolute left-0 top-0 h-full w-72 bg-white dark:bg-slate-900 shadow-xl">
+      <div
+        className={`fixed inset-0 z-[60] transition-opacity duration-200 ${
+          menuOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+        }`}
+        aria-hidden={!menuOpen}
+      >
+        <button type="button" className="absolute inset-0 bg-black/40" onClick={() => setMenuOpen(false)} />
+        <div
+          className={`absolute left-0 top-0 h-full w-72 bg-white dark:bg-slate-900 shadow-xl transform transition-transform duration-200 ease-out ${
+            menuOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
             <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800">
               <div className="text-lg font-bold">Menu</div>
               <button type="button" className="text-slate-500" onClick={() => setMenuOpen(false)}>
@@ -108,8 +116,7 @@ const Facilities: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </div>
 
       <div className="sticky top-0 left-0 right-0 z-50 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md">
         <div className="flex items-center p-4 pb-2 justify-between">
