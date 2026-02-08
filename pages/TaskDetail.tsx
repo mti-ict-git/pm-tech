@@ -1,0 +1,923 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import {
+  ApiError,
+  apiApproveTaskBySupervisor,
+  apiApproveTaskBySuperadmin,
+  apiDownloadAssetImage,
+  apiDownloadChecklistEvidence,
+  apiGetAsset,
+  apiGetTask,
+  apiPauseTask,
+  apiRejectTaskApproval,
+  apiReviseTaskApproval,
+  apiResumeTask,
+  apiStartTask,
+  apiSubmitTaskForApproval,
+  apiSuperadminUpdateTaskChecklist,
+  apiUploadTaskChecklistEvidenceFile,
+  apiUploadTaskEvidenceFile,
+  type CompleteTaskChecklistResultInput,
+  type TaskChecklistEvidence,
+  type TaskDetail,
+} from '../lib/api';
+import { useAuth } from '../providers/AuthProvider';
+
+const TaskDetail: React.FC = () => {
+  const navigate = useNavigate();
+  const params = useParams();
+  const taskId = params.id as string;
+  const { user } = useAuth();
+  const [task, setTask] = useState<TaskDetail | null>(null);
+  const [assetImageUrl, setAssetImageUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [approvalActionLoading, setApprovalActionLoading] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectReopenTask, setRejectReopenTask] = useState(false);
+  const [reviseOpen, setReviseOpen] = useState(false);
+  const [reviseReason, setReviseReason] = useState('');
+  const [reviseReopenTask, setReviseReopenTask] = useState(true);
+  const [checklistDraft, setChecklistDraft] = useState<Record<string, { outcome: 0 | 1 | 2 | null; notes: string }>>({});
+  const [expandedItemId, setExpandedItemId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
+  const checklistUploadItemIdRef = useRef<string | null>(null);
+  const checklistFileInputRef = useRef<HTMLInputElement | null>(null);
+  const taskFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await apiGetTask(taskId);
+        if (!isCancelled) setTask(res);
+      } catch (e) {
+        if (!isCancelled) setError('Failed to load task');
+      } finally {
+        if (!isCancelled) setLoading(false);
+      }
+    };
+    if (taskId) void load();
+    return () => { isCancelled = true; };
+  }, [taskId]);
+
+  useEffect(() => {
+    const assetId = task?.asset?.id;
+    if (!assetId) {
+      setAssetImageUrl(null);
+      return;
+    }
+    let active = true;
+    let objectUrl: string | null = null;
+    const loadImage = async (): Promise<void> => {
+      setAssetImageUrl(null);
+      try {
+        const asset = await apiGetAsset(assetId);
+        if (!active) return;
+
+        const directUrl = asset?.imageUrl?.trim() ? asset.imageUrl : null;
+        if (directUrl) {
+          setAssetImageUrl(directUrl);
+          return;
+        }
+
+        const res = await apiDownloadAssetImage(assetId);
+        if (!active) return;
+        objectUrl = URL.createObjectURL(res.blob);
+        setAssetImageUrl(objectUrl);
+      } catch {
+        if (active) setAssetImageUrl(null);
+      }
+    };
+    void loadImage();
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [task?.asset?.id]);
+
+  useEffect(() => {
+    if (!task) return;
+    const next: Record<string, { outcome: 0 | 1 | 2 | null; notes: string }> = {};
+    for (const item of task.checklistItems) {
+      const outcome = item.result ? item.result.outcome : null;
+      const notes = item.result?.notes ?? '';
+      next[item.id] = { outcome, notes };
+    }
+    setChecklistDraft(next);
+  }, [task?.id]);
+
+  const formatDueAt = (value: string): string => {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    const date = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return `${date} ${time}`;
+  };
+
+  const formatUploadedAt = (value: string): string => {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    const date = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
+    const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return `${date} ${time}`;
+  };
+
+  const formatBytes = (value: number | null): string => {
+    if (value === null) return '—';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = value;
+    let i = 0;
+    while (size >= 1024 && i < units.length - 1) {
+      size /= 1024;
+      i += 1;
+    }
+    const decimals = i === 0 ? 0 : 1;
+    return `${size.toFixed(decimals)} ${units[i]}`;
+  };
+
+  const openChecklistEvidence = async (e: TaskChecklistEvidence): Promise<void> => {
+    const isInternal = e.uri === 'imported' || e.uri === 'stored' || e.uri === 'uploaded';
+    if (!isInternal) {
+      const target = e.uri.trim();
+      if (target) window.open(target, '_blank', 'noreferrer');
+      return;
+    }
+
+    setOpeningEvidenceId(e.id);
+    setError(null);
+    try {
+      const downloaded = await apiDownloadChecklistEvidence({ checklistEvidenceId: e.id });
+      const preferredType = downloaded.contentType ?? downloaded.blob.type;
+      const blob = preferredType && downloaded.blob.type !== preferredType ? new Blob([downloaded.blob], { type: preferredType }) : downloaded.blob;
+      const url = URL.createObjectURL(blob);
+      const opened = window.open(url, '_blank', 'noreferrer');
+      if (!opened) window.location.assign(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Failed to open attachment';
+      setError(message);
+    } finally {
+      setOpeningEvidenceId(null);
+    }
+  };
+
+  const progress = useMemo(() => {
+    if (!task) return 0;
+    const total = task.checklistItems.filter((i) => i.isActive).length;
+    const done = task.checklistItems.filter((i) => {
+      if (!i.isActive) return false;
+      const draft = checklistDraft[i.id];
+      return draft !== undefined && draft.outcome !== null;
+    }).length;
+    if (!total) return 0;
+    return Math.round((done / total) * 100);
+  }, [task, checklistDraft]);
+
+  const statusLower = (task?.status ?? '').toLowerCase();
+  const approvalStatus = (task?.approvalStatus ?? '').trim();
+  const isApprovalLocked = approvalStatus === 'PendingSupervisor' || approvalStatus === 'PendingSuperadmin' || approvalStatus === 'Approved';
+  const roles = user?.roles ?? [];
+  const isSuperadmin = roles.includes('Superadmin');
+  const isManager = roles.includes('Supervisor') || roles.includes('Admin') || roles.includes('Superadmin');
+  const canEditChecklist = (!isApprovalLocked || (isSuperadmin && approvalStatus !== 'Approved')) && statusLower !== 'completed' && statusLower !== 'cancelled';
+  const canStart = statusLower === 'open';
+  const canPause = statusLower === 'in_progress';
+  const canResume = statusLower === 'paused';
+
+  const canReview = useMemo(() => {
+    if (approvalStatus === 'PendingSupervisor') {
+      return roles.includes('Supervisor') || roles.includes('Admin') || roles.includes('Superadmin');
+    }
+    if (approvalStatus === 'PendingSuperadmin') {
+      return roles.includes('Superadmin');
+    }
+    return false;
+  }, [approvalStatus, roles]);
+
+  const canSubmitForApproval = Boolean(task) && !isManager && !isApprovalLocked && approvalStatus !== 'Rejected' && statusLower !== 'completed' && statusLower !== 'cancelled';
+
+  const onApprove = async (): Promise<void> => {
+    if (!task) return;
+    if (!canReview) return;
+    setApprovalActionLoading(true);
+    setError(null);
+    try {
+      if (approvalStatus === 'PendingSupervisor') {
+        await apiApproveTaskBySupervisor(task.id);
+      } else if (approvalStatus === 'PendingSuperadmin') {
+        await apiApproveTaskBySuperadmin(task.id);
+      }
+      const refreshed = await apiGetTask(task.id);
+      setTask(refreshed);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to approve';
+      setError(message);
+    } finally {
+      setApprovalActionLoading(false);
+    }
+  };
+
+  const onReject = async (): Promise<void> => {
+    if (!task) return;
+    if (!canReview) return;
+    setApprovalActionLoading(true);
+    setError(null);
+    try {
+      await apiRejectTaskApproval({ taskId: task.id, reason: rejectReason.trim() ? rejectReason.trim() : undefined, reopenTask: rejectReopenTask });
+      setRejectOpen(false);
+      setRejectReason('');
+      setRejectReopenTask(false);
+      const refreshed = await apiGetTask(task.id);
+      setTask(refreshed);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to reject';
+      setError(message);
+    } finally {
+      setApprovalActionLoading(false);
+    }
+  };
+
+  const onRevise = async (): Promise<void> => {
+    if (!task) return;
+    if (!canReview) return;
+    setApprovalActionLoading(true);
+    setError(null);
+    try {
+      await apiReviseTaskApproval({
+        taskId: task.id,
+        reason: reviseReason.trim() ? reviseReason.trim() : undefined,
+        reopenTask: reviseReopenTask,
+      });
+      setReviseOpen(false);
+      setReviseReason('');
+      setReviseReopenTask(true);
+      const refreshed = await apiGetTask(task.id);
+      setTask(refreshed);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to revise';
+      setError(message);
+    } finally {
+      setApprovalActionLoading(false);
+    }
+  };
+
+  const buildChecklistResults = (): CompleteTaskChecklistResultInput[] => {
+    const items = task?.checklistItems ?? [];
+    const results: CompleteTaskChecklistResultInput[] = [];
+    for (const item of items) {
+      if (!item.isActive) continue;
+      const draft = checklistDraft[item.id];
+      const outcome = draft?.outcome ?? null;
+      if (outcome === null) {
+        if (item.isMandatory) throw new Error('Missing outcome for a mandatory checklist item');
+        continue;
+      }
+
+      if (!item.requiresPassFail && outcome === 2) throw new Error('Invalid outcome for this checklist item');
+      if (item.isMandatory && outcome === 0) throw new Error('Mandatory checklist items cannot be skipped');
+
+      const notesValue = draft?.notes ?? '';
+      const notesRequired = item.requiresNotes || item.isMandatory;
+      if (notesRequired && outcome !== 0 && notesValue.trim().length === 0) {
+        throw new Error('Notes are required for this checklist item');
+      }
+
+      if (item.enableAttachment && item.requiresAttachment && outcome !== 0 && item.evidence.length === 0) {
+        throw new Error('Attachment is required for this checklist item');
+      }
+
+      results.push({
+        templateChecklistItemId: item.id,
+        outcome,
+        notes: notesValue.trim() ? notesValue.trim() : null,
+      });
+    }
+    return results;
+  };
+
+  const onStart = async (): Promise<void> => {
+    if (!task) return;
+    setActionLoading(true);
+    try {
+      await apiStartTask(task.id);
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch {
+      setError('Failed to start');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const onPause = async (): Promise<void> => {
+    if (!task) return;
+    setActionLoading(true);
+    try {
+      await apiPauseTask(task.id);
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch {
+      setError('Failed to pause');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const onResume = async (): Promise<void> => {
+    if (!task) return;
+    setActionLoading(true);
+    try {
+      await apiResumeTask(task.id);
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch {
+      setError('Failed to resume');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const onSubmitForApproval = async (): Promise<void> => {
+    if (!task) return;
+    setActionLoading(true);
+    try {
+      const checklistResults = buildChecklistResults();
+      await apiSubmitTaskForApproval({ taskId: task.id, checklistResults });
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to submit';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const onSaveSuperadminEdits = async (): Promise<void> => {
+    if (!task) return;
+    if (!isSuperadmin) return;
+    setActionLoading(true);
+    try {
+      const checklistResults = buildChecklistResults();
+      await apiSuperadminUpdateTaskChecklist({ taskId: task.id, checklistResults });
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to save';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const onToggleExpand = (itemId: string): void => {
+    setExpandedItemId((prev) => (prev === itemId ? null : itemId));
+  };
+
+  const setOutcome = (itemId: string, outcome: 0 | 1 | 2 | null): void => {
+    if (!canEditChecklist) return;
+    setChecklistDraft((prev) => ({ ...prev, [itemId]: { outcome, notes: prev[itemId]?.notes ?? '' } }));
+  };
+
+  const setNotes = (itemId: string, notes: string): void => {
+    if (!canEditChecklist) return;
+    setChecklistDraft((prev) => ({ ...prev, [itemId]: { outcome: prev[itemId]?.outcome ?? null, notes } }));
+  };
+
+  const triggerChecklistUpload = (itemId: string): void => {
+    if (!canEditChecklist) return;
+    checklistUploadItemIdRef.current = itemId;
+    checklistFileInputRef.current?.click();
+  };
+
+  const triggerTaskUpload = (): void => {
+    if (!canEditChecklist) return;
+    taskFileInputRef.current?.click();
+  };
+
+  const onChecklistFileSelected = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const itemId = checklistUploadItemIdRef.current;
+    if (!file || !task || !itemId) return;
+    setUploading(true);
+    setError(null);
+    try {
+      await apiUploadTaskChecklistEvidenceFile({ taskId: task.id, templateChecklistItemId: itemId, file });
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onTaskFileSelected = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !task) return;
+    setUploading(true);
+    setError(null);
+    try {
+      await apiUploadTaskEvidenceFile({ taskId: task.id, file });
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    );
+  }
+
+  if (!task) {
+    return (
+      <div className="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex flex-col">
+        <header className="sticky top-0 z-30 bg-white/80 dark:bg-background-dark/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+          <div className="flex items-center gap-3 p-4">
+            <button onClick={() => navigate(-1)} className="flex items-center justify-center size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+              <span className="material-symbols-outlined text-slate-700 dark:text-slate-300">arrow_back_ios_new</span>
+            </button>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">Task</h1>
+          </div>
+        </header>
+        <main className="p-4 text-sm text-slate-500 dark:text-slate-400">{error ?? 'Not found'}</main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-display">
+      <header className="sticky top-0 z-30 bg-white/80 dark:bg-background-dark/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+        <div className="flex items-center justify-between p-4 pb-2">
+          <div className="flex items-center gap-3">
+            <button onClick={() => navigate(-1)} className="flex items-center justify-center size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+              <span className="material-symbols-outlined text-slate-700 dark:text-slate-300">arrow_back_ios_new</span>
+            </button>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{task.taskNumber}</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-emerald-500" title="Offline-first Sync Active">cloud_done</span>
+            <button className="flex items-center justify-center size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
+              <span className="material-symbols-outlined text-slate-700 dark:text-slate-300">more_vert</span>
+            </button>
+          </div>
+        </div>
+        <div className="px-4 pb-3 flex gap-2">
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+            {task.status}
+          </span>
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 uppercase tracking-wider">
+            Priority: {task.priority}
+          </span>
+        </div>
+      </header>
+
+      <main className="flex-1 overflow-y-auto pb-48">
+        {error && (
+          <section className="px-4 pt-4">
+            <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-3 text-sm text-red-600 dark:text-red-400">
+              {error}
+            </div>
+          </section>
+        )}
+        <section className="p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
+            <div className="relative h-48 w-full bg-white dark:bg-white">
+              {assetImageUrl ? (
+                <img alt="Asset" className="w-full h-full object-contain" src={assetImageUrl} />
+              ) : (
+                <div className="w-full h-full bg-white flex items-center justify-center">
+                  <span className="material-symbols-outlined text-slate-500 dark:text-slate-400 text-4xl">photo</span>
+                </div>
+              )}
+              <div className="absolute top-3 left-3 bg-black/50 backdrop-blur-md text-white px-3 py-1 rounded-lg text-xs font-medium">
+                Asset: {task.asset.assetTag}
+              </div>
+            </div>
+            <div className="p-4">
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{task.asset.name}</h2>
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                  <span className="material-symbols-outlined text-sm">location_on</span>
+                  <span className="text-sm">{task.facility?.name ?? ''}</span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                  <span className="material-symbols-outlined text-sm">history</span>
+                  <span className="text-sm">Scheduled: {formatDueAt(task.scheduledDueAt)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="px-4 py-2">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-bold text-slate-900 dark:text-white uppercase text-xs tracking-widest">Task Completion</h3>
+            <span className="text-sm font-bold text-primary">{progress}%</span>
+          </div>
+          <div className="h-2.5 w-full bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
+            <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${progress}%` }}></div>
+          </div>
+        </section>
+
+        <section className="px-4 pt-6">
+          <h3 className="font-bold text-slate-900 dark:text-white mb-4">Maintenance Steps</h3>
+          <div className="space-y-3">
+            {task.checklistItems.length > 0 ? (
+              task.checklistItems
+                .filter((i) => i.isActive)
+                .sort((a, b) => a.sortOrder - b.sortOrder)
+                .map((item) => {
+                  const draft = checklistDraft[item.id];
+                  const outcome = draft?.outcome ?? null;
+                  const isExpanded = expandedItemId === item.id;
+                  const isDone = outcome !== null;
+                  const isSkipped = outcome === 0;
+                  const badge = item.isMandatory ? 'Required' : 'Optional';
+                  const hasCamera = item.enableAttachment;
+
+                  return (
+                    <div key={item.id} className={`rounded-lg border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 ${isDone ? 'opacity-90' : ''}`}>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => onToggleExpand(item.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            onToggleExpand(item.id);
+                          }
+                        }}
+                        className="w-full flex items-center gap-4 p-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900"
+                        aria-expanded={isExpanded}
+                      >
+                        <div className="relative flex items-center">
+                          <button
+                            type="button"
+                            disabled={!canEditChecklist}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (outcome === null) setOutcome(item.id, item.requiresPassFail ? 1 : 1);
+                              else setOutcome(item.id, null);
+                            }}
+                            className={`size-7 rounded-full border flex items-center justify-center ${isDone && !isSkipped ? 'bg-primary border-primary text-white' : isSkipped ? 'bg-slate-100 dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-slate-500' : 'border-slate-300 dark:border-slate-700'}`}
+                          >
+                            {isDone && !isSkipped ? <span className="material-symbols-outlined text-base">check</span> : null}
+                            {isSkipped ? <span className="material-symbols-outlined text-base">remove</span> : null}
+                          </button>
+                        </div>
+                        <div className="flex-1 text-left">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className={`text-sm font-medium ${isDone ? 'text-slate-700 dark:text-slate-200' : 'text-slate-900 dark:text-white'}`}>{item.itemText}</p>
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 font-semibold uppercase">{badge}</span>
+                          </div>
+                          {item.requiresNotes || item.requiresAttachment ? (
+                            <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+                              {item.requiresNotes ? 'Notes required' : ''}{item.requiresNotes && item.requiresAttachment ? ' • ' : ''}{item.requiresAttachment ? 'Attachment required' : ''}
+                            </div>
+                          ) : null}
+                        </div>
+                        {hasCamera ? (
+                          <button
+                            type="button"
+                            disabled={uploading || !canEditChecklist}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              triggerChecklistUpload(item.id);
+                            }}
+                            className="size-10 rounded-full flex items-center justify-center hover:bg-slate-50 dark:hover:bg-slate-800"
+                            aria-label="Add photo"
+                          >
+                            <span className="material-symbols-outlined text-slate-500">photo_camera</span>
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="px-4 pb-4 space-y-3">
+                          <div className="flex gap-2">
+                            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Outcome</label>
+                          </div>
+                          <select
+                            value={outcome === null ? '' : String(outcome)}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === '') setOutcome(item.id, null);
+                              else setOutcome(item.id, Number(v) as 0 | 1 | 2);
+                            }}
+                            className="w-full h-10 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm"
+                            disabled={!canEditChecklist}
+                          >
+                            <option value="">Not set</option>
+                            <option value="1">{item.requiresPassFail ? 'Pass' : 'Done'}</option>
+                            {item.requiresPassFail ? <option value="2">Fail</option> : null}
+                            {!item.isMandatory ? <option value="0">Skip</option> : null}
+                          </select>
+
+                          <div>
+                            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Notes</label>
+                            <textarea
+                              value={draft?.notes ?? ''}
+                              onChange={(e) => setNotes(item.id, e.target.value)}
+                              className="mt-2 w-full min-h-[72px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
+                              placeholder={item.requiresNotes || item.isMandatory ? 'Required notes…' : 'Optional notes…'}
+                              disabled={!canEditChecklist}
+                            />
+                          </div>
+
+                          {item.enableAttachment || item.evidence.length > 0 ? (
+                            <div>
+                              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Evidence</div>
+                              <div className="mt-2 space-y-2">
+                                {item.evidence.length === 0 ? (
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">No evidence uploaded.</div>
+                                ) : (
+                                  item.evidence.map((e) => (
+                                    <button
+                                      key={e.id}
+                                      type="button"
+                                      onClick={() => void openChecklistEvidence(e)}
+                                      className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-left active:bg-slate-50 dark:active:bg-slate-700"
+                                    >
+                                      <div className="flex items-center justify-between gap-3">
+                                        <div className="min-w-0">
+                                          <div className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                                            {e.fileName ?? 'Attachment'}
+                                          </div>
+                                          <div className="text-xs text-slate-500 dark:text-slate-400">
+                                            {formatBytes(e.sizeBytes)} · {formatUploadedAt(e.uploadedAt)}
+                                          </div>
+                                        </div>
+                                        {openingEvidenceId === e.id ? (
+                                          <span className="material-symbols-outlined text-slate-500">progress_activity</span>
+                                        ) : (
+                                          <span className="material-symbols-outlined text-slate-500">open_in_new</span>
+                                        )}
+                                      </div>
+                                    </button>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })
+            ) : (
+              <div className="text-sm text-slate-500 dark:text-slate-400">No checklist items</div>
+            )}
+          </div>
+        </section>
+      </main>
+
+      {rejectOpen ? (
+        <div className="fixed inset-0 z-[60]">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setRejectOpen(false)}
+            className="absolute inset-0 bg-black/30"
+          />
+          <div className="absolute inset-x-0 bottom-0 bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-4 pb-8">
+            <div className="max-w-screen-sm mx-auto space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Reject Approval</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">{task.taskNumber}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRejectOpen(false)}
+                  className="size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center"
+                  aria-label="Close"
+                >
+                  <span className="material-symbols-outlined text-slate-600 dark:text-slate-300">close</span>
+                </button>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Reason (optional)</label>
+                <textarea
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  className="mt-2 w-full min-h-[96px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
+                  placeholder="Add rejection reason…"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={rejectReopenTask}
+                  onChange={(e) => setRejectReopenTask(e.target.checked)}
+                  className="size-4"
+                />
+                Reopen task after rejection
+              </label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={approvalActionLoading}
+                  onClick={() => setRejectOpen(false)}
+                  className="flex-1 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={approvalActionLoading}
+                  onClick={() => void onReject()}
+                  className="flex-1 h-12 rounded-xl bg-rose-600 text-white font-bold disabled:opacity-60"
+                >
+                  Reject
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {reviseOpen ? (
+        <div className="fixed inset-0 z-[60]">
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setReviseOpen(false)}
+            className="absolute inset-0 bg-black/30"
+          />
+          <div className="absolute inset-x-0 bottom-0 bg-white dark:bg-slate-900 rounded-t-2xl border-t border-slate-200 dark:border-slate-800 p-4 pb-8">
+            <div className="max-w-screen-sm mx-auto space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Revise Approval</p>
+                  <p className="text-sm font-bold text-slate-900 dark:text-white">{task.taskNumber}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReviseOpen(false)}
+                  className="size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center"
+                  aria-label="Close"
+                >
+                  <span className="material-symbols-outlined text-slate-600 dark:text-slate-300">close</span>
+                </button>
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-slate-500 dark:text-slate-400">Correction note (optional)</label>
+                <textarea
+                  value={reviseReason}
+                  onChange={(e) => setReviseReason(e.target.value)}
+                  className="mt-2 w-full min-h-[96px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm"
+                  placeholder="Describe what needs to be corrected…"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={reviseReopenTask}
+                  onChange={(e) => setReviseReopenTask(e.target.checked)}
+                  className="size-4"
+                />
+                Reopen task for technician edits
+              </label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  disabled={approvalActionLoading}
+                  onClick={() => setReviseOpen(false)}
+                  className="flex-1 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={approvalActionLoading}
+                  onClick={() => void onRevise()}
+                  className="flex-1 h-12 rounded-xl bg-amber-600 text-white font-bold disabled:opacity-60"
+                >
+                  Revise
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Floating Action Buttons */}
+      <input ref={checklistFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onChecklistFileSelected} />
+      <input ref={taskFileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onTaskFileSelected} />
+
+      <div className="fixed bottom-32 right-4 flex flex-col gap-3 z-40">
+        <button className="size-14 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 active:scale-95 transition-transform">
+          <span className="material-symbols-outlined">add_comment</span>
+        </button>
+        <button disabled={uploading || !canEditChecklist} onClick={triggerTaskUpload} className="size-14 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-700 dark:text-slate-200 active:scale-95 transition-transform">
+          <span className="material-symbols-outlined">photo_camera</span>
+        </button>
+      </div>
+
+      <div className="fixed bottom-0 inset-x-0 z-50">
+        <div className="bg-white/90 dark:bg-background-dark/90 ios-bottom-blur border-t border-slate-200 dark:border-slate-800 p-4 pb-8">
+          <div className="max-w-screen-sm mx-auto">
+            {canReview ? (
+              <div className="grid grid-cols-12 gap-3">
+                {isSuperadmin && approvalStatus !== 'Approved' ? (
+                  <button
+                    type="button"
+                    disabled={actionLoading}
+                    onClick={() => void onSaveSuperadminEdits()}
+                    className="col-span-4 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 disabled:opacity-60"
+                  >
+                    Save
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={approvalActionLoading}
+                  onClick={() => setReviseOpen(true)}
+                  className={`${isSuperadmin && approvalStatus !== 'Approved' ? 'col-span-4' : 'col-span-6'} h-12 rounded-xl border border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300 font-bold`}
+                >
+                  Revise
+                </button>
+                <button
+                  type="button"
+                  disabled={approvalActionLoading}
+                  onClick={() => setRejectOpen(true)}
+                  className={`${isSuperadmin && approvalStatus !== 'Approved' ? 'col-span-4' : 'col-span-6'} h-12 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-300 font-bold`}
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  disabled={approvalActionLoading}
+                  onClick={() => void onApprove()}
+                  className="col-span-12 h-12 rounded-xl bg-emerald-600 text-white font-bold shadow-lg shadow-emerald-600/30 active:scale-[0.98] transition-transform disabled:opacity-60"
+                >
+                  Approve
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-12 gap-3">
+                {canStart ? (
+                  <button
+                    disabled={actionLoading}
+                    onClick={onStart}
+                    className="col-span-4 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-xl">play_arrow</span>
+                    Start
+                  </button>
+                ) : canResume ? (
+                  <button
+                    disabled={actionLoading}
+                    onClick={onResume}
+                    className="col-span-4 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-xl">play_arrow</span>
+                    Resume
+                  </button>
+                ) : (
+                  <button
+                    disabled={actionLoading || !canPause}
+                    onClick={onPause}
+                    className="col-span-4 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-xl">pause</span>
+                    Pause
+                  </button>
+                )}
+
+                <button
+                  disabled={actionLoading || !canSubmitForApproval}
+                  onClick={() => void onSubmitForApproval()}
+                  className="col-span-8 h-12 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform disabled:opacity-60"
+                >
+                  <span className="material-symbols-outlined text-xl">send</span>
+                  Submit for approval
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default TaskDetail;

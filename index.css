@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary: #136dec;
+}
+
+[data-accent="green"] {
+  --primary: #22c55e;
+}
+
+[data-accent="amber"] {
+  --primary: #f59e0b;
+}
+
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+.ios-bottom-blur { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }

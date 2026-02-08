@@ -1,0 +1,7 @@
+{
+  "name": "PM Tech",
+  "description": "Mobile-first Preventive Maintenance system for field technicians.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
