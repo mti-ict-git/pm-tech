@@ -90,6 +90,8 @@ const TaskDetail: React.FC = () => {
   const [previewTranslateY, setPreviewTranslateY] = useState(0);
   const checklistUploadItemIdRef = useRef<string | null>(null);
   const checklistFileInputRef = useRef<HTMLInputElement | null>(null);
+  const checklistPhotoInputRef = useRef<HTMLInputElement | null>(null);
+  const checklistVideoInputRef = useRef<HTMLInputElement | null>(null);
   const taskFileInputRef = useRef<HTMLInputElement | null>(null);
   const checklistDraftInitTaskIdRef = useRef<string | null>(null);
   const draftSaveNoticeTimerRef = useRef<number | null>(null);
@@ -312,6 +314,100 @@ const TaskDetail: React.FC = () => {
     const date = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
     const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     return `${date} ${time}`;
+  };
+
+  type ApprovalPill = { label: string; className: string; icon: string };
+  type ApprovalStepState = 'done' | 'current' | 'pending' | 'rejected';
+  type ApprovalStep = { title: string; state: ApprovalStepState; meta: string | null; icon: string };
+
+  const formatApprovalActor = (ref: TaskDetail['technicianCompletedBy']): string | null => {
+    if (!ref) return null;
+    return ref.displayName ?? ref.username ?? null;
+  };
+
+  const formatActorAt = (ref: TaskDetail['technicianCompletedBy'], at: string | null): string | null => {
+    if (!at) return null;
+    const who = formatApprovalActor(ref);
+    return who ? `${who} • ${formatDueAt(at)}` : formatDueAt(at);
+  };
+
+  const approvalSummary = (t: TaskDetail): ApprovalPill => {
+    const approvalStatus = (t.approvalStatus ?? '').trim();
+    if (approvalStatus === 'Approved') {
+      return { label: 'Approved', className: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300', icon: 'verified' };
+    }
+    if (approvalStatus === 'PendingSupervisor') {
+      return { label: 'Pending Supervisor', className: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300', icon: 'hourglass_top' };
+    }
+    if (approvalStatus === 'PendingSuperadmin') {
+      return { label: 'Pending Superadmin', className: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300', icon: 'hourglass_top' };
+    }
+    if (approvalStatus === 'Rejected') {
+      return { label: 'Rejected', className: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300', icon: 'cancel' };
+    }
+    if (t.revisionNote || t.revisedAt) {
+      return { label: 'Needs Revision', className: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300', icon: 'edit' };
+    }
+    if (t.technicianCompletedAt || t.completedAt) {
+      return { label: 'Submitted', className: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300', icon: 'send' };
+    }
+    return { label: 'Not Submitted', className: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300', icon: 'radio_button_unchecked' };
+  };
+
+  const approvalSteps = (t: TaskDetail): { step1: ApprovalStep; step2: ApprovalStep; step3: ApprovalStep; line12: string; line23: string } => {
+    const approvalStatus = (t.approvalStatus ?? '').trim();
+    const submittedAt = t.technicianCompletedAt ?? t.completedAt;
+    const isRejected = approvalStatus === 'Rejected' || Boolean(t.rejectedAt);
+    const rejectedBySuperadmin = isRejected && Boolean(t.supervisorApprovedAt);
+
+    const step1State: ApprovalStepState = submittedAt ? 'done' : 'pending';
+    let step2State: ApprovalStepState = 'pending';
+    let step3State: ApprovalStepState = 'pending';
+
+    if (approvalStatus === 'PendingSupervisor') {
+      step2State = 'current';
+    } else if (approvalStatus === 'PendingSuperadmin') {
+      step2State = 'done';
+      step3State = 'current';
+    } else if (approvalStatus === 'Approved') {
+      step2State = 'done';
+      step3State = 'done';
+    } else if (isRejected) {
+      if (rejectedBySuperadmin) {
+        step2State = 'done';
+        step3State = 'rejected';
+      } else {
+        step2State = 'rejected';
+      }
+    } else if (t.supervisorApprovedAt) {
+      step2State = 'done';
+    }
+
+    const line12 = step1State === 'done' ? 'bg-primary' : 'bg-slate-200 dark:bg-slate-800';
+    const line23 = step2State === 'done' ? 'bg-primary' : step2State === 'rejected' || step3State === 'rejected' ? 'bg-rose-500' : 'bg-slate-200 dark:bg-slate-800';
+
+    return {
+      step1: {
+        title: 'Submitted',
+        state: step1State,
+        meta: formatActorAt(t.technicianCompletedBy, submittedAt),
+        icon: 'send',
+      },
+      step2: {
+        title: 'Supervisor',
+        state: step2State,
+        meta: isRejected && !rejectedBySuperadmin ? formatActorAt(t.rejectedBy, t.rejectedAt) : formatActorAt(t.supervisorApprovedBy, t.supervisorApprovedAt),
+        icon: step2State === 'rejected' ? 'cancel' : step2State === 'done' ? 'check' : 'assignment',
+      },
+      step3: {
+        title: 'Superadmin',
+        state: step3State,
+        meta: isRejected && rejectedBySuperadmin ? formatActorAt(t.rejectedBy, t.rejectedAt) : formatActorAt(t.superadminApprovedBy, t.superadminApprovedAt),
+        icon: step3State === 'rejected' ? 'cancel' : step3State === 'done' ? 'check' : 'shield',
+      },
+      line12,
+      line23,
+    };
   };
 
   const formatUploadedAt = (value: string): string => {
@@ -820,12 +916,72 @@ const TaskDetail: React.FC = () => {
     checklistFileInputRef.current?.click();
   };
 
+  const triggerChecklistPhotoCapture = (itemId: string): void => {
+    if (!canEditChecklist) return;
+    checklistUploadItemIdRef.current = itemId;
+    checklistPhotoInputRef.current?.click();
+  };
+
+  const triggerChecklistVideoCapture = (itemId: string): void => {
+    if (!canEditChecklist) return;
+    checklistUploadItemIdRef.current = itemId;
+    checklistVideoInputRef.current?.click();
+  };
+
   const triggerTaskUpload = (): void => {
     if (!canEditChecklist) return;
     taskFileInputRef.current?.click();
   };
 
   const onChecklistFileSelected = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const itemId = checklistUploadItemIdRef.current;
+    if (!file || !task || !itemId) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const uploaded = await apiUploadTaskChecklistEvidenceFile({ taskId: task.id, templateChecklistItemId: itemId, file });
+      if (uploaded.queued) {
+        setSuccess('Attachment queued. Will upload when online.');
+        setSyncTick((v) => v + 1);
+        return;
+      }
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onChecklistPhotoSelected = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const itemId = checklistUploadItemIdRef.current;
+    if (!file || !task || !itemId) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const uploaded = await apiUploadTaskChecklistEvidenceFile({ taskId: task.id, templateChecklistItemId: itemId, file });
+      if (uploaded.queued) {
+        setSuccess('Attachment queued. Will upload when online.');
+        setSyncTick((v) => v + 1);
+        return;
+      }
+      const res = await apiGetTask(task.id);
+      setTask(res);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onChecklistVideoSelected = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
     e.target.value = '';
     const itemId = checklistUploadItemIdRef.current;
@@ -1151,7 +1307,40 @@ const TaskDetail: React.FC = () => {
 
                           {item.enableAttachment || item.evidence.length > 0 ? (
                             <div>
-                              <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Evidence</div>
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="text-xs font-semibold text-slate-500 dark:text-slate-400">Evidence</div>
+                                {item.enableAttachment && canEditChecklist ? (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={uploading}
+                                      onClick={() => triggerChecklistUpload(item.id)}
+                                      className="h-8 px-3 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 disabled:opacity-60"
+                                    >
+                                      <span className="material-symbols-outlined text-sm">attach_file</span>
+                                      File
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={uploading}
+                                      onClick={() => triggerChecklistPhotoCapture(item.id)}
+                                      className="h-8 px-3 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 disabled:opacity-60"
+                                    >
+                                      <span className="material-symbols-outlined text-sm">photo_camera</span>
+                                      Photo
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={uploading}
+                                      onClick={() => triggerChecklistVideoCapture(item.id)}
+                                      className="h-8 px-3 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2 disabled:opacity-60"
+                                    >
+                                      <span className="material-symbols-outlined text-sm">videocam</span>
+                                      Video
+                                    </button>
+                                  </div>
+                                ) : null}
+                              </div>
                               <div className="mt-2 space-y-2">
                                 {getQueuedChecklistEvidenceCount(task.id, item.id) > 0 ? (
                                   <div className="text-xs text-primary">
@@ -1197,6 +1386,66 @@ const TaskDetail: React.FC = () => {
             ) : (
               <div className="text-sm text-slate-500 dark:text-slate-400">No checklist items</div>
             )}
+          </div>
+        </section>
+
+        <section className="px-4 pt-4">
+          <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800 p-4">
+            {(() => {
+              const summary = approvalSummary(task);
+              const flow = approvalSteps(task);
+              const stepCircleClass = (state: ApprovalStepState): string => {
+                if (state === 'done') return 'bg-primary text-white border-primary';
+                if (state === 'current') return 'bg-white dark:bg-slate-900 text-primary border-primary';
+                if (state === 'rejected') return 'bg-rose-600 text-white border-rose-600';
+                return 'bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700';
+              };
+
+              return (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Approval</p>
+                      <p className="mt-1 text-sm font-bold text-slate-900 dark:text-white">Flow</p>
+                    </div>
+                    <span className={`${summary.className} inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-full`}>
+                      <span className="material-symbols-outlined text-[12px] leading-none">{summary.icon}</span>
+                      {summary.label}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 flex items-start">
+                    <div className="w-1/3 flex flex-col items-center text-center">
+                      <div className={`size-10 rounded-full border flex items-center justify-center ${stepCircleClass(flow.step1.state)}`}>
+                        <span className="material-symbols-outlined text-[18px]">{flow.step1.icon}</span>
+                      </div>
+                      <div className="mt-2 text-xs font-semibold text-slate-900 dark:text-white">{flow.step1.title}</div>
+                      {flow.step1.meta ? <div className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">{flow.step1.meta}</div> : null}
+                    </div>
+
+                    <div className={`mt-5 h-0.5 flex-1 ${flow.line12}`} />
+
+                    <div className="w-1/3 flex flex-col items-center text-center">
+                      <div className={`size-10 rounded-full border flex items-center justify-center ${stepCircleClass(flow.step2.state)}`}>
+                        <span className="material-symbols-outlined text-[18px]">{flow.step2.icon}</span>
+                      </div>
+                      <div className="mt-2 text-xs font-semibold text-slate-900 dark:text-white">{flow.step2.title}</div>
+                      {flow.step2.meta ? <div className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">{flow.step2.meta}</div> : null}
+                    </div>
+
+                    <div className={`mt-5 h-0.5 flex-1 ${flow.line23}`} />
+
+                    <div className="w-1/3 flex flex-col items-center text-center">
+                      <div className={`size-10 rounded-full border flex items-center justify-center ${stepCircleClass(flow.step3.state)}`}>
+                        <span className="material-symbols-outlined text-[18px]">{flow.step3.icon}</span>
+                      </div>
+                      <div className="mt-2 text-xs font-semibold text-slate-900 dark:text-white">{flow.step3.title}</div>
+                      {flow.step3.meta ? <div className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">{flow.step3.meta}</div> : null}
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </section>
       </main>
@@ -1525,6 +1774,8 @@ const TaskDetail: React.FC = () => {
 
       {/* Floating Action Buttons */}
       <input ref={checklistFileInputRef} type="file" className="hidden" onChange={onChecklistFileSelected} />
+      <input ref={checklistPhotoInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onChecklistPhotoSelected} />
+      <input ref={checklistVideoInputRef} type="file" accept="video/*" capture="environment" className="hidden" onChange={onChecklistVideoSelected} />
       <input ref={taskFileInputRef} type="file" className="hidden" onChange={onTaskFileSelected} />
 
       <div className="fixed bottom-32 right-4 flex flex-col gap-3 z-40">

@@ -103,6 +103,26 @@ const Tasks: React.FC = () => {
     return { label: 'Upcoming', className: 'bg-slate-100 dark:bg-slate-800 text-slate-500' };
   };
 
+  const approvalPill = (t: TaskListItem): { label: string; className: string; icon: string } => {
+    const approvalStatus = (t.approvalStatus ?? '').trim();
+    if (approvalStatus === 'Approved') {
+      return { label: 'Approved', className: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300', icon: 'verified' };
+    }
+    if (approvalStatus === 'PendingSupervisor') {
+      return { label: 'Pending Supervisor', className: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300', icon: 'hourglass_top' };
+    }
+    if (approvalStatus === 'PendingSuperadmin') {
+      return { label: 'Pending Superadmin', className: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300', icon: 'hourglass_top' };
+    }
+    if (approvalStatus === 'Rejected') {
+      return { label: 'Rejected', className: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-300', icon: 'cancel' };
+    }
+    if (t.technicianCompletedAt || t.completedAt) {
+      return { label: 'Submitted', className: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300', icon: 'send' };
+    }
+    return { label: 'Not submitted', className: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300', icon: 'radio_button_unchecked' };
+  };
+
   useEffect(() => {
     let isCancelled = false;
     const load = async () => {
@@ -375,42 +395,52 @@ const Tasks: React.FC = () => {
         ) : shownItems.length === 0 ? (
           <div className="text-sm text-slate-500 dark:text-slate-400">No tasks found.</div>
         ) : (
-          shownItems.map((t) => (
-            <div key={t.id} className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden">
-              <div className="p-4">
-                <div className="flex justify-between items-start mb-2">
-                  <span className="text-xs font-bold text-slate-400 tracking-wider">{t.taskNumber}</span>
-                  <span className={`${statusPill(t).className} text-[10px] font-bold px-2 py-0.5 rounded-full uppercase`}>{statusPill(t).label}</span>
+          shownItems.map((t) => {
+            const s = statusPill(t);
+            const a = approvalPill(t);
+            return (
+              <div key={t.id} className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800 overflow-hidden">
+                <div className="p-4">
+                  <div className="flex justify-between items-start mb-2">
+                    <span className="text-xs font-bold text-slate-400 tracking-wider">{t.taskNumber}</span>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <span className={`${s.className} text-[10px] font-bold px-2 py-0.5 rounded-full uppercase`}>{s.label}</span>
+                      <span className={`${a.className} inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full`}>
+                        <span className="material-symbols-outlined text-[12px] leading-none">{a.icon}</span>
+                        {a.label}
+                      </span>
+                    </div>
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white leading-tight mb-2">{t.asset.name ?? t.asset.assetTag ?? t.template.name}</h3>
+                  <div className="flex flex-col gap-1 mb-4">
+                    <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                      <span className="material-symbols-outlined text-sm">assignment</span>
+                      <span className="text-sm">{t.template.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+                      <span className="material-symbols-outlined text-sm">event</span>
+                      <span className="text-sm">{formatDueAt(t.scheduledDueAt)}</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Progress</span>
+                      <span className="text-xs font-bold text-primary">{t.checklistCompleted}/{t.checklistTotal} steps</span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                      <div className="h-full bg-primary" style={{ width: `${progressPct(t)}%` }}></div>
+                    </div>
+                  </div>
                 </div>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white leading-tight mb-2">{t.asset.name ?? t.asset.assetTag ?? t.template.name}</h3>
-                <div className="flex flex-col gap-1 mb-4">
-                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                    <span className="material-symbols-outlined text-sm">assignment</span>
-                    <span className="text-sm">{t.template.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-                    <span className="material-symbols-outlined text-sm">event</span>
-                    <span className="text-sm">{formatDueAt(t.scheduledDueAt)}</span>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Progress</span>
-                    <span className="text-xs font-bold text-primary">{t.checklistCompleted}/{t.checklistTotal} steps</span>
-                  </div>
-                  <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                    <div className="h-full bg-primary" style={{ width: `${progressPct(t)}%` }}></div>
-                  </div>
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+                  <button onClick={() => navigate(`/task/${t.id}`)} className="bg-primary text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2">
+                    View
+                    <span className="material-symbols-outlined text-xs">arrow_forward_ios</span>
+                  </button>
                 </div>
               </div>
-              <div className="bg-slate-50 dark:bg-slate-800/50 p-3 border-t border-slate-100 dark:border-slate-800 flex justify-end">
-                <button onClick={() => navigate(`/task/${t.id}`)} className="bg-primary text-white text-xs font-bold px-4 py-2 rounded-lg flex items-center gap-2">
-                  View
-                  <span className="material-symbols-outlined text-xs">arrow_forward_ios</span>
-                </button>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
