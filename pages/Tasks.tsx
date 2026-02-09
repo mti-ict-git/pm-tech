@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiGetTaskStatusCounts, apiListTasks, type TaskListItem, type TaskStatusCountsResponse } from '../lib/api';
 
@@ -11,6 +11,12 @@ const Tasks: React.FC = () => {
   const [counts, setCounts] = useState<TaskStatusCountsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortOpen, setSortOpen] = useState(false);
+  type SortMode = 'due_asc' | 'due_desc' | 'created_desc' | 'created_asc';
+  const [sortMode, setSortMode] = useState<SortMode>('due_asc');
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   type TabKey = 'all' | 'in_progress' | 'upcoming' | 'due_today' | 'overdue' | 'completed';
   type AssignedKey = 'any' | 'me';
@@ -143,7 +149,46 @@ const Tasks: React.FC = () => {
     return Math.round((done / total) * 100);
   };
 
-  const shownItems = useMemo(() => items, [items]);
+  const shownItems = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const filtered = q
+      ? items.filter((t) => {
+          const assetName = (t.asset.name ?? '').toLowerCase();
+          const assetTag = (t.asset.assetTag ?? '').toLowerCase();
+          const taskNumber = (t.taskNumber ?? '').toLowerCase();
+          const templateName = (t.template.name ?? '').toLowerCase();
+          const assigneeName = (t.assignedTo.displayName ?? t.assignedTo.username ?? '').toLowerCase();
+          return (
+            assetName.includes(q) ||
+            assetTag.includes(q) ||
+            taskNumber.includes(q) ||
+            templateName.includes(q) ||
+            assigneeName.includes(q)
+          );
+        })
+      : items;
+
+    const parseIso = (value: string): number | null => {
+      const ts = new Date(value).getTime();
+      return Number.isNaN(ts) ? null : ts;
+    };
+
+    const compareNumber = (a: number | null, b: number | null, dir: 'asc' | 'desc'): number => {
+      if (a === null && b === null) return 0;
+      if (a === null) return 1;
+      if (b === null) return -1;
+      return dir === 'asc' ? a - b : b - a;
+    };
+
+    const sorted = filtered.slice();
+    sorted.sort((a, b) => {
+      if (sortMode === 'due_asc') return compareNumber(parseIso(a.scheduledDueAt), parseIso(b.scheduledDueAt), 'asc');
+      if (sortMode === 'due_desc') return compareNumber(parseIso(a.scheduledDueAt), parseIso(b.scheduledDueAt), 'desc');
+      if (sortMode === 'created_asc') return compareNumber(parseIso(a.createdAt), parseIso(b.createdAt), 'asc');
+      return compareNumber(parseIso(a.createdAt), parseIso(b.createdAt), 'desc');
+    });
+    return sorted;
+  }, [items, searchQuery, sortMode]);
 
   const formatDueAt = (value: string): string => {
     const d = new Date(value);
@@ -187,11 +232,101 @@ const Tasks: React.FC = () => {
             <button onClick={() => navigate('/schedule')} className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
                <span className="material-symbols-outlined">calendar_month</span>
             </button>
-            <button className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+            <button
+              type="button"
+              onClick={() => setSortOpen(true)}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+              aria-label="Sort tasks"
+              aria-haspopup="menu"
+              aria-expanded={sortOpen}
+            >
+              <span className="material-symbols-outlined">sort</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSearchOpen(true);
+                requestAnimationFrame(() => searchInputRef.current?.focus());
+              }}
+              className="w-10 h-10 flex items-center justify-center rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300"
+              aria-label="Search tasks"
+              aria-expanded={searchOpen}
+            >
               <span className="material-symbols-outlined">search</span>
             </button>
           </div>
         </div>
+
+        {searchOpen ? (
+          <div className="pb-1">
+            <label className="flex flex-col w-full">
+              <div className="flex w-full items-stretch rounded-xl h-11 bg-slate-200/50 dark:bg-slate-800/50">
+                <div className="text-slate-500 flex items-center justify-center pl-4">
+                  <span className="material-symbols-outlined text-xl">search</span>
+                </div>
+                <input
+                  ref={searchInputRef}
+                  className="flex w-full border-none bg-transparent focus:outline-0 focus:ring-0 h-full placeholder:text-slate-500 px-3 text-base font-normal"
+                  placeholder="Search task, asset, template, assignee…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSearchOpen(false);
+                  }}
+                  className="text-slate-600 dark:text-slate-300 flex items-center justify-center px-3"
+                  aria-label="Close search"
+                >
+                  <span className="material-symbols-outlined text-xl">close</span>
+                </button>
+              </div>
+            </label>
+          </div>
+        ) : null}
+
+        {sortOpen ? (
+          <div className="fixed inset-0 z-[60]">
+            <button
+              type="button"
+              aria-label="Close sort"
+              onClick={() => setSortOpen(false)}
+              className="absolute inset-0 bg-black/10"
+            />
+            <div className="absolute top-16 right-4 w-[min(92vw,320px)] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800">
+                <p className="text-sm font-bold text-slate-900 dark:text-white">Sort tasks</p>
+              </div>
+              <div className="p-2" role="menu" aria-label="Sort options">
+                {(
+                  [
+                    { key: 'due_asc' as const, label: 'Due date (soonest first)' },
+                    { key: 'due_desc' as const, label: 'Due date (latest first)' },
+                    { key: 'created_desc' as const, label: 'Created (newest first)' },
+                    { key: 'created_asc' as const, label: 'Created (oldest first)' },
+                  ]
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    onClick={() => {
+                      setSortMode(opt.key);
+                      setSortOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-left"
+                    role="menuitem"
+                  >
+                    <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">{opt.label}</span>
+                    {sortMode === opt.key ? <span className="material-symbols-outlined text-primary text-base">check</span> : <span className="w-6" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div className="flex gap-2 overflow-x-auto hide-scrollbar pb-2">
           <button onClick={() => { setTabAndUrl('all'); }} className={`px-5 py-2 rounded-full text-sm font-semibold whitespace-nowrap flex items-center gap-2 ${tab === 'all' ? 'bg-primary text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
             <span>All</span>

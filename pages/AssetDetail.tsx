@@ -298,6 +298,13 @@ const AssetDetail: React.FC = () => {
             </div>
           </div>
         </div>
+
+        <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm mb-6">
+          <p className="text-slate-500 dark:text-slate-400 text-xs font-medium uppercase tracking-wider mb-1">Notes</p>
+          <div className="text-slate-900 dark:text-white text-sm whitespace-pre-wrap max-h-40 overflow-auto rounded-lg bg-slate-50 dark:bg-slate-800/60 px-3 py-2">
+            {asset?.snipeNotes && asset.snipeNotes.trim().length > 0 ? asset.snipeNotes : 'No notes'}
+          </div>
+        </div>
       </div>
 
       <div className="px-4 grid grid-cols-12 gap-3 mb-8">

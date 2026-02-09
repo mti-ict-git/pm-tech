@@ -12,6 +12,7 @@ type RecentAsset = {
   assetStatus: string | null;
   assetOperationalStatus: Asset['assetOperationalStatus'];
   locationName: string | null;
+  notes: string | null;
   viewedAt: string;
 };
 
@@ -31,6 +32,7 @@ const readRecentAssets = (): RecentAsset[] => {
         assetStatus: typeof v.assetStatus === 'string' ? v.assetStatus : null,
         assetOperationalStatus: (v.assetOperationalStatus === 'broken' || v.assetOperationalStatus === 'archived') ? (v.assetOperationalStatus as Asset['assetOperationalStatus']) : 'operational',
         locationName: typeof v.locationName === 'string' ? v.locationName : null,
+        notes: typeof v.notes === 'string' ? v.notes : null,
         viewedAt: typeof v.viewedAt === 'string' ? v.viewedAt : new Date(0).toISOString(),
       }))
       .filter((v) => v.id && v.assetTag);
@@ -61,6 +63,14 @@ const statusPillRecent = (r: RecentAsset): { label: string; className: string } 
   if (r.assetOperationalStatus === 'broken') return { label: 'Broken', className: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400' };
   if (r.assetOperationalStatus === 'archived') return { label: 'Archived', className: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400' };
   return { label: 'Operational', className: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' };
+};
+
+const notePreview = (value: string | null): string | null => {
+  if (!value) return null;
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  if (normalized.length <= 90) return normalized;
+  return `${normalized.slice(0, 87)}…`;
 };
 
 const Assets: React.FC = () => {
@@ -171,6 +181,7 @@ const Assets: React.FC = () => {
       assetStatus: a.assetStatus,
       assetOperationalStatus: a.assetOperationalStatus,
       locationName: a.location.name ?? null,
+      notes: notePreview(a.snipeNotes),
       viewedAt: new Date().toISOString(),
     });
     navigate(`/asset/${a.id}`);
@@ -322,7 +333,7 @@ const Assets: React.FC = () => {
             <div className="space-y-4">
               {assets.map((a) => (
                 <div key={a.id} onClick={() => onOpenAssetFromList(a)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm flex items-center justify-between cursor-pointer active:bg-slate-50 dark:active:bg-slate-800">
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">#{a.assetTag}</span>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${statusPill(a).className}`}>{statusPill(a).label}</span>
@@ -332,6 +343,12 @@ const Assets: React.FC = () => {
                       <span className="material-symbols-outlined text-sm mr-1">location_on</span>
                       <span className="text-sm">{a.location.name ?? '—'}</span>
                     </div>
+                    {notePreview(a.snipeNotes) ? (
+                      <div className="flex items-center text-slate-500 dark:text-slate-400 mt-1 min-w-0">
+                        <span className="material-symbols-outlined text-sm mr-1">note</span>
+                        <span className="text-sm truncate">{notePreview(a.snipeNotes)}</span>
+                      </div>
+                    ) : null}
                   </div>
                   <button className="size-10 flex items-center justify-center bg-slate-50 dark:bg-slate-800 rounded-lg text-primary">
                     <span className="material-symbols-outlined">qr_code_2</span>
@@ -347,7 +364,7 @@ const Assets: React.FC = () => {
             <div className="space-y-4">
               {recentAssets.map((r) => (
                 <div key={r.id} onClick={() => onOpenRecent(r)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm flex items-center justify-between cursor-pointer active:bg-slate-50 dark:active:bg-slate-800">
-                  <div className="flex-1">
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">#{r.assetTag}</span>
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${statusPillRecent(r).className}`}>{statusPillRecent(r).label}</span>
@@ -357,6 +374,12 @@ const Assets: React.FC = () => {
                       <span className="material-symbols-outlined text-sm mr-1">location_on</span>
                       <span className="text-sm">{r.locationName ?? '—'}</span>
                     </div>
+                    {r.notes ? (
+                      <div className="flex items-center text-slate-500 dark:text-slate-400 mt-1 min-w-0">
+                        <span className="material-symbols-outlined text-sm mr-1">note</span>
+                        <span className="text-sm truncate">{r.notes}</span>
+                      </div>
+                    ) : null}
                   </div>
                   <button className="size-10 flex items-center justify-center bg-slate-50 dark:bg-slate-800 rounded-lg text-primary">
                     <span className="material-symbols-outlined">qr_code_2</span>
