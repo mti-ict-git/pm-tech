@@ -21,18 +21,14 @@ const BottomNav: React.FC = () => {
         <button
           key={item.label}
           onClick={() => navigate(item.path)}
-          className={`flex flex-col items-center gap-2 min-w-[72px] transition-colors duration-200 ${
+          className={`flex flex-col items-center gap-2 min-w-[72px] ${
             isActive(item.path) ? 'text-primary' : 'text-slate-400 dark:text-slate-500'
           }`}
         >
-          <span
-            className={`material-symbols-outlined text-[28px] transition-transform duration-200 ${
-              isActive(item.path) ? 'material-symbols-filled -translate-y-0.5' : 'translate-y-0'
-            }`}
-          >
+          <span className={`material-symbols-outlined text-[28px] ${isActive(item.path) ? 'material-symbols-filled' : ''}`}>
             {item.icon}
           </span>
-          <span className={`text-[12px] transition-all duration-200 ${isActive(item.path) ? 'font-bold' : 'font-medium'}`}>
+          <span className={`text-[12px] ${isActive(item.path) ? 'font-bold' : 'font-medium'}`}>
             {item.label}
           </span>
           {item.path === '/offline' && (

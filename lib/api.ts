@@ -1646,3 +1646,86 @@ export const apiGetSchedulingDay = async (date: string): Promise<{ items: Schedu
   const q = `?date=${encodeURIComponent(date)}`;
   return apiGet<{ items: SchedulingDayItem[] }>(`/api/scheduling/day${q}`);
 };
+
+declare const __APP_VERSION__: string | undefined;
+
+export type LatestAppUpdate = {
+  appId: string;
+  versionName: string;
+  fileName: string;
+  sizeBytes: number;
+  sha256: string;
+  modifiedAt: string;
+  downloadUrl: string;
+};
+
+export const apiGetLatestAppUpdate = async (appId: string): Promise<LatestAppUpdate> => {
+  const q = `?appId=${encodeURIComponent(appId)}`;
+  const res = await apiFetchJson<{ latest: LatestAppUpdate }>(`/api/app-updates/latest${q}`);
+  return res.latest;
+};
+
+type SemverParts = { major: number; minor: number; patch: number };
+
+const parseSemverParts = (versionName: string): SemverParts | null => {
+  const m = versionName.trim().match(/^(\d+)\.(\d+)\.(\d+)$/);
+  if (!m) return null;
+  const major = Number(m[1]);
+  const minor = Number(m[2]);
+  const patch = Number(m[3]);
+  if (!Number.isFinite(major) || !Number.isFinite(minor) || !Number.isFinite(patch)) return null;
+  return { major, minor, patch };
+};
+
+const compareSemver = (a: string, b: string): number => {
+  const pa = parseSemverParts(a);
+  const pb = parseSemverParts(b);
+  if (!pa && !pb) return 0;
+  if (!pa) return -1;
+  if (!pb) return 1;
+  if (pa.major !== pb.major) return pa.major < pb.major ? -1 : 1;
+  if (pa.minor !== pb.minor) return pa.minor < pb.minor ? -1 : 1;
+  if (pa.patch !== pb.patch) return pa.patch < pb.patch ? -1 : 1;
+  return 0;
+};
+
+const getCurrentVersionName = (): string | null => {
+  const raw = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? __APP_VERSION__;
+  if (!raw || !raw.trim()) return null;
+  const trimmed = raw.trim();
+  return trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
+};
+
+export const hasNewerAppUpdate = (latestVersionName: string): boolean => {
+  const current = getCurrentVersionName();
+  if (!current) return true;
+  return compareSemver(current, latestVersionName) < 0;
+};
+
+type AppUpdaterPlugin = {
+  downloadAndInstall(options: { url: string; fileName?: string }): Promise<{ ok: boolean; code?: string }>;
+};
+
+let appUpdaterPlugin: AppUpdaterPlugin | null = null;
+
+const getAppUpdaterPlugin = async (): Promise<AppUpdaterPlugin> => {
+  if (appUpdaterPlugin) return appUpdaterPlugin;
+  const { registerPlugin } = await import("@capacitor/core");
+  appUpdaterPlugin = registerPlugin<AppUpdaterPlugin>("AppUpdater");
+  return appUpdaterPlugin;
+};
+
+export const downloadAndInstallAppUpdate = async (latest: LatestAppUpdate): Promise<{ ok: boolean; code?: string }> => {
+  const { Capacitor } = await import("@capacitor/core");
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") {
+    const absolute = latest.downloadUrl.startsWith("http") ? latest.downloadUrl : `${API_BASE_URL}${latest.downloadUrl}`;
+    window.open(absolute, "_blank");
+    return { ok: false, code: "NOT_ANDROID" };
+  }
+
+  await ensureDiscovery();
+  const base = getApiBase();
+  const absolute = latest.downloadUrl.startsWith("http") ? latest.downloadUrl : `${base}${latest.downloadUrl}`;
+  const plugin = await getAppUpdaterPlugin();
+  return plugin.downloadAndInstall({ url: absolute, fileName: latest.fileName });
+};
