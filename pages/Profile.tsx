@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { apiRegisterDevice } from '../lib/api';
+import { apiGetLatestAppUpdate, apiRegisterDevice, downloadAndInstallAppUpdate, hasNewerAppUpdate, type LatestAppUpdate } from '../lib/api';
 import { registerDeviceToken, useAuth } from '../providers/AuthProvider';
 
 declare const __APP_VERSION__: string | undefined;
@@ -55,6 +55,10 @@ const Profile: React.FC = () => {
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => readTheme());
   const [accent, setAccent] = useState<Accent>(() => readAccent());
   const [pushEnabled, setPushEnabled] = useState<boolean>(() => readPushEnabled());
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [latestUpdate, setLatestUpdate] = useState<LatestAppUpdate | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
 
   const displayName = useMemo(() => {
     if (!user) return '—';
@@ -87,6 +91,8 @@ const Profile: React.FC = () => {
 
   const versionRaw = import.meta.env.VITE_APP_VERSION || __APP_VERSION__;
   const versionLabel = versionRaw && versionRaw.trim().length > 0 ? (versionRaw.startsWith('v') ? versionRaw : `v${versionRaw}`) : '—';
+
+  const isUpdateAvailable = latestUpdate ? hasNewerAppUpdate(latestUpdate.versionName) : false;
 
   useEffect(() => {
     const onOnline = () => setIsOnline(true);
@@ -146,6 +152,39 @@ const Profile: React.FC = () => {
       setSyncError('Sync failed');
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const onCheckUpdate = async (): Promise<void> => {
+    setUpdateChecking(true);
+    setUpdateError(null);
+    try {
+      const latest = await apiGetLatestAppUpdate('pm-tech');
+      setLatestUpdate(latest);
+    } catch {
+      setUpdateError('Update check failed');
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const onInstallUpdate = async (): Promise<void> => {
+    if (!latestUpdate) return;
+    setUpdateInstalling(true);
+    setUpdateError(null);
+    try {
+      const result = await downloadAndInstallAppUpdate(latestUpdate);
+      if (!result.ok) {
+        if (result.code === 'NEEDS_UNKNOWN_SOURCES_PERMISSION') {
+          setUpdateError('Enable “Install unknown apps” for PM Tech, then retry.');
+          return;
+        }
+        setUpdateError('Update failed');
+      }
+    } catch {
+      setUpdateError('Update failed');
+    } finally {
+      setUpdateInstalling(false);
     }
   };
 
@@ -272,6 +311,33 @@ const Profile: React.FC = () => {
       <section className="px-4 mt-8 space-y-2">
         <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest px-1 py-2">Account</h3>
         <div className="bg-white dark:bg-slate-800 rounded-xl overflow-hidden border border-slate-100 dark:border-slate-700">
+          <button
+            onClick={onCheckUpdate}
+            disabled={updateChecking || updateInstalling}
+            className="w-full flex items-center justify-between px-4 py-3.5 border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors disabled:opacity-60"
+          >
+            <div className="flex items-center gap-3 text-slate-700 dark:text-slate-200">
+              <span className="material-symbols-outlined">system_update</span>
+              <span className="font-medium">
+                {updateChecking ? 'Checking updates…' : latestUpdate ? (isUpdateAvailable ? 'Update available' : 'App is up to date') : 'Check for updates'}
+              </span>
+            </div>
+            <span className="text-sm text-slate-400">{latestUpdate ? `v${latestUpdate.versionName}` : ''}</span>
+          </button>
+          {updateError ? <div className="px-4 pt-3 text-xs text-red-500">{updateError}</div> : null}
+          {latestUpdate && isUpdateAvailable ? (
+            <div className="px-4 pb-4 pt-3 border-b border-slate-100 dark:border-slate-700">
+              <button
+                onClick={onInstallUpdate}
+                disabled={updateInstalling}
+                className="w-full bg-primary hover:bg-primary/90 disabled:opacity-60 text-white flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-semibold text-sm transition-all active:scale-[0.99]"
+              >
+                <span className="material-symbols-outlined text-[18px]">download</span>
+                {updateInstalling ? 'Downloading…' : `Update to v${latestUpdate.versionName}`}
+              </button>
+              <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">Current: {versionLabel}</p>
+            </div>
+          ) : null}
           <button className="w-full flex items-center justify-between px-4 py-3.5 border-b border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
             <div className="flex items-center gap-3 text-slate-700 dark:text-slate-200">
               <span className="material-symbols-outlined">info</span>

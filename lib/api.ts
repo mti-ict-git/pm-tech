@@ -1,8 +1,8 @@
 import { getAccessToken, getRefreshToken, setAccessToken, setRefreshToken, clearAccessToken, clearRefreshToken, notifyAuthInvalid } from "./auth";
 
-const defaultApiBaseUrl = import.meta.env.PROD ? "" : "http://localhost:3001";
+const defaultApiBaseUrl = import.meta.env.PROD ? "https://preventivepm.justanapi.my.id" : "http://localhost:3001";
 const fallbackApiBaseUrl = ((import.meta.env.VITE_API_FALLBACK_BASE_URL ?? import.meta.env.VITE_API_BASE_URL) ?? defaultApiBaseUrl).replace(/\/+$/, "");
-const defaultDiscoveryUrl = "https://gist.githubusercontent.com/widjis/3c055fff630cac02469d2ad505407a11/raw/ngrok.json";
+const defaultDiscoveryUrl = "";
 const discoveryUrl = (((import.meta.env.VITE_DISCOVERY_URL as string | undefined) ?? "").trim() || defaultDiscoveryUrl).trim();
 const requestTimeoutMs = Number(import.meta.env.VITE_API_TIMEOUT_MS ?? "15000");
 const discoveryTimeoutMs = Number(import.meta.env.VITE_API_DISCOVERY_TIMEOUT_MS ?? "4000");
