@@ -19,6 +19,11 @@ View your app in AI Studio: https://ai.studio/apps/drive/1CobEZxXeyTrGD39Ld8JWef
 3. Run the app:
    `npm run dev`
 
+## Backend URL
+
+- Default production base: `https://preventivepm.justanapi.my.id`
+- Configure in `.env.local` using `VITE_API_BASE_URL`.
+
 ## Features
 
 - Assets lookup with a sidebar switcher for Assets and Facilities

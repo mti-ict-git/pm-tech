@@ -199,99 +199,91 @@ const Home: React.FC = () => {
       </header>
 
       {approvalsOpen ? (
-        <div className="fixed inset-0 z-[60]">
-          <button
-            type="button"
-            aria-label="Close notifications"
-            onClick={() => setApprovalsOpen(false)}
-            className="absolute inset-0 bg-black/20"
-          />
-          <div className="absolute top-14 right-3 w-[min(94vw,420px)] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
-              <div>
-                <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Notifications</p>
-                <p className="text-lg font-bold text-slate-900 dark:text-white">PM Overview</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setApprovalsOpen(false)}
-                className="size-11 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900"
-                aria-label="Close"
-              >
-                <span className="material-symbols-outlined text-slate-700 dark:text-slate-200 text-[26px] leading-none">close</span>
-              </button>
+        <div className="fixed inset-0 z-[60] bg-white dark:bg-slate-900 pt-[env(safe-area-inset-top)] flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+            <div>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Notifications</p>
+              <p className="text-lg font-bold text-slate-900 dark:text-white">PM Overview</p>
             </div>
-            <div className="max-h-[70vh] overflow-y-auto">
-              <div className="p-5">
-                <div className="space-y-3">
-                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4">
-                    <p className="text-base font-semibold text-slate-900 dark:text-white">{overdueCount} PM task(s) overdue</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-300">Tasks past due and not completed</p>
+            <button
+              type="button"
+              onClick={() => setApprovalsOpen(false)}
+              className="size-11 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900"
+              aria-label="Close notifications"
+            >
+              <span className="material-symbols-outlined text-slate-700 dark:text-slate-200 text-[26px] leading-none">close</span>
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]">
+            <div className="p-5">
+              <div className="space-y-3">
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4">
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">{overdueCount} PM task(s) overdue</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">Tasks past due and not completed</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4">
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">{dueTodayCount} due today</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">Scheduled for today</p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4">
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">{upcoming7DaysCount} upcoming in 7 days</p>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">Due within the next week</p>
+                </div>
+              </div>
+
+              <div className="mt-5 border-t border-slate-200 dark:border-slate-800 pt-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Approvals</p>
+                    <p className="text-base font-bold text-slate-900 dark:text-white">{approvalsStage ? approvalTitle : 'No Approvals'}</p>
                   </div>
-                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4">
-                    <p className="text-base font-semibold text-slate-900 dark:text-white">{dueTodayCount} due today</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-300">Scheduled for today</p>
-                  </div>
-                  <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 p-4">
-                    <p className="text-base font-semibold text-slate-900 dark:text-white">{upcoming7DaysCount} upcoming in 7 days</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-300">Due within the next week</p>
-                  </div>
+                  {approvalsStage ? (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                      {approvalsCount}
+                    </span>
+                  ) : null}
                 </div>
 
-                <div className="mt-5 border-t border-slate-200 dark:border-slate-800 pt-5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Approvals</p>
-                      <p className="text-base font-bold text-slate-900 dark:text-white">{approvalsStage ? approvalTitle : 'No Approvals'}</p>
-                    </div>
-                    {approvalsStage ? (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                        {approvalsCount}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  {!approvalsStage ? (
-                    <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">No approval inbox for your role.</div>
-                  ) : approvalsLoading ? (
-                    <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">Loading…</div>
-                  ) : approvalsError ? (
-                    <div className="mt-3 text-sm text-rose-600 dark:text-rose-400">{approvalsError}</div>
-                  ) : approvals.length === 0 ? (
-                    <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">Nothing pending.</div>
-                  ) : (
-                    <div className="mt-3 -mx-2">
-                      <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
-                        {approvals.map((item) => {
-                          const subject = item.asset.name ?? item.asset.assetTag ?? item.facility?.name ?? item.template.name;
-                          const subtitle = item.asset.assetTag ?? item.facility?.locationName ?? '';
-                          return (
-                            <button
-                              key={item.id}
-                              type="button"
-                              onClick={() => {
-                                setApprovalsOpen(false);
-                                if (item.maintenanceType === 'CM') navigate(`/work-orders/${item.id}`);
-                                else navigate(`/task/${item.id}`);
-                              }}
-                              className="w-full text-left px-4 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="text-base font-semibold text-slate-900 dark:text-white truncate">{subject}</p>
-                                  <p className="text-sm text-slate-600 dark:text-slate-300 truncate">{item.taskNumber}{subtitle ? ` • ${subtitle}` : ''}</p>
-                                </div>
-                                <span className="shrink-0 inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                                  Review
-                                </span>
+                {!approvalsStage ? (
+                  <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">No approval inbox for your role.</div>
+                ) : approvalsLoading ? (
+                  <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">Loading…</div>
+                ) : approvalsError ? (
+                  <div className="mt-3 text-sm text-rose-600 dark:text-rose-400">{approvalsError}</div>
+                ) : approvals.length === 0 ? (
+                  <div className="mt-3 text-sm text-slate-600 dark:text-slate-300">Nothing pending.</div>
+                ) : (
+                  <div className="mt-3 -mx-2">
+                    <div className="divide-y divide-slate-100 dark:divide-slate-800 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
+                      {approvals.map((item) => {
+                        const subject = item.asset.name ?? item.asset.assetTag ?? item.facility?.name ?? item.template.name;
+                        const subtitle = item.asset.assetTag ?? item.facility?.locationName ?? '';
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setApprovalsOpen(false);
+                              if (item.maintenanceType === 'CM') navigate(`/work-orders/${item.id}`);
+                              else navigate(`/task/${item.id}`);
+                            }}
+                            className="w-full text-left px-4 py-4 hover:bg-slate-50 dark:hover:bg-slate-800/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-base font-semibold text-slate-900 dark:text-white truncate">{subject}</p>
+                                <p className="text-sm text-slate-600 dark:text-slate-300 truncate">{item.taskNumber}{subtitle ? ` • ${subtitle}` : ''}</p>
                               </div>
-                            </button>
-                          );
-                        })}
-                      </div>
+                              <span className="shrink-0 inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                                Review
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>

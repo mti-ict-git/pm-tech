@@ -25,7 +25,11 @@ const BottomNav: React.FC = () => {
             isActive(item.path) ? 'text-primary' : 'text-slate-400 dark:text-slate-500'
           }`}
         >
-          <span className={`material-symbols-outlined text-[28px] ${isActive(item.path) ? 'material-symbols-filled' : ''}`}>
+          <span
+            className={`material-symbols-outlined inline-flex items-center justify-center leading-none transition-all duration-150 ${
+              isActive(item.path) ? 'text-[32px] material-symbols-filled' : 'text-[26px]'
+            }`}
+          >
             {item.icon}
           </span>
           <span className={`text-[12px] ${isActive(item.path) ? 'font-bold' : 'font-medium'}`}>
