@@ -1833,47 +1833,52 @@ const TaskDetail: React.FC = () => {
                   <button
                     disabled={actionLoading}
                     onClick={onStart}
-                    className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                    aria-label="Start"
+                    className="col-span-4 sm:col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-0 sm:gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
                   >
                     <span className="material-symbols-outlined text-xl">play_arrow</span>
-                    Start
+                    <span className="hidden sm:inline">Start</span>
                   </button>
                 ) : canResume ? (
                   <button
                     disabled={actionLoading}
                     onClick={onResume}
-                    className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                    aria-label="Resume"
+                    className="col-span-4 sm:col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-0 sm:gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
                   >
                     <span className="material-symbols-outlined text-xl">play_arrow</span>
-                    Resume
+                    <span className="hidden sm:inline">Resume</span>
                   </button>
                 ) : (
                   <button
                     disabled={actionLoading || !canPause}
                     onClick={onPause}
-                    className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
+                    aria-label="Pause"
+                    className="col-span-4 sm:col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-0 sm:gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors"
                   >
                     <span className="material-symbols-outlined text-xl">pause</span>
-                    Pause
+                    <span className="hidden sm:inline">Pause</span>
                   </button>
                 )}
 
                 <button
                   disabled={actionLoading || !canEditChecklist}
                   onClick={onSaveDraft}
-                  className="col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors disabled:opacity-60"
+                  aria-label={draftSaveFlash ? 'Saved' : 'Save'}
+                  className="col-span-4 sm:col-span-3 h-12 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-center gap-0 sm:gap-2 active:bg-slate-50 dark:active:bg-slate-800 transition-colors disabled:opacity-60"
                 >
                   <span className="material-symbols-outlined text-xl">{draftSaveFlash ? 'check' : 'save'}</span>
-                  {draftSaveFlash ? 'Saved' : 'Save'}
+                  <span className="hidden sm:inline">{draftSaveFlash ? 'Saved' : 'Save'}</span>
                 </button>
 
                 <button
                   disabled={actionLoading || !canSubmitForApproval}
                   onClick={() => void onSubmitForApproval()}
-                  className="col-span-6 h-12 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-2 shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform disabled:opacity-60"
+                  aria-label="Submit for approval"
+                  className="col-span-4 sm:col-span-6 h-12 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-0 sm:gap-2 shadow-lg shadow-primary/30 active:scale-[0.98] transition-transform disabled:opacity-60"
                 >
                   <span className="material-symbols-outlined text-xl">send</span>
-                  Submit for approval
+                  <span className="hidden sm:inline">Submit for approval</span>
                 </button>
 
                 <div
