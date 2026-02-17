@@ -13,3 +13,6 @@ project(':capacitor-push-notifications').projectDir = new File('../node_modules/
 
 include ':capgo-capacitor-native-biometric'
 project(':capgo-capacitor-native-biometric').projectDir = new File('../node_modules/@capgo/capacitor-native-biometric/android')
+
+include ':pm-tech-app-updater'
+project(':pm-tech-app-updater').projectDir = new File('../plugins/app-updater/android')

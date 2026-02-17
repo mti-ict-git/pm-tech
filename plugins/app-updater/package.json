@@ -1,0 +1,11 @@
+{
+  "name": "@pm-tech/app-updater",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import { getAccessToken, getRefreshToken, setAccessToken, setRefreshToken, clearAccessToken, clearRefreshToken, notifyAuthInvalid } from "./auth";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 
 const defaultApiBaseUrl = import.meta.env.PROD ? "https://preventivepm.justanapi.my.id" : "http://localhost:3001";
 const fallbackApiBaseUrl = ((import.meta.env.VITE_API_FALLBACK_BASE_URL ?? import.meta.env.VITE_API_BASE_URL) ?? defaultApiBaseUrl).replace(/\/+$/, "");
@@ -1737,15 +1738,13 @@ type AppUpdaterPlugin = {
 
 let appUpdaterPlugin: AppUpdaterPlugin | null = null;
 
-const getAppUpdaterPlugin = async (): Promise<AppUpdaterPlugin> => {
+const getAppUpdaterPlugin = (): AppUpdaterPlugin => {
   if (appUpdaterPlugin) return appUpdaterPlugin;
-  const { registerPlugin } = await import("@capacitor/core");
   appUpdaterPlugin = registerPlugin<AppUpdaterPlugin>("AppUpdater");
   return appUpdaterPlugin;
 };
 
 export const downloadAndInstallAppUpdate = async (latest: LatestAppUpdate): Promise<{ ok: boolean; code?: string }> => {
-  const { Capacitor } = await import("@capacitor/core");
   if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") {
     const absolute = latest.downloadUrl.startsWith("http") ? latest.downloadUrl : `${API_BASE_URL}${latest.downloadUrl}`;
     window.open(absolute, "_blank");
@@ -1755,18 +1754,36 @@ export const downloadAndInstallAppUpdate = async (latest: LatestAppUpdate): Prom
   await ensureDiscovery();
   const base = getApiBase();
   const absolute = latest.downloadUrl.startsWith("http") ? latest.downloadUrl : `${base}${latest.downloadUrl}`;
-  const plugin = await getAppUpdaterPlugin();
+  const plugin = getAppUpdaterPlugin();
 
-  try {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(absolute, { method: "HEAD", signal: controller.signal });
-    window.clearTimeout(timeoutId);
-    if (!res.ok) return { ok: false, code: `HTTP_${res.status}` };
-  } catch (err: unknown) {
-    const msg = err instanceof Error && err.message.trim().length > 0 ? err.message : null;
-    return { ok: false, code: msg ? `NETWORK_${msg}` : "NETWORK" };
-  }
+  type PreflightResult =
+    | { kind: "ok" }
+    | { kind: "timeout" }
+    | { kind: "http"; status: number }
+    | { kind: "network"; message: string | null };
+
+  const preflightTimeoutMs = 8000;
+  const preflight: Promise<PreflightResult> = (async () => {
+    try {
+      const res = await fetch(absolute, { method: "HEAD" });
+      if (!res.ok) return { kind: "http", status: res.status };
+      return { kind: "ok" };
+    } catch (err: unknown) {
+      const msg = err instanceof Error && err.message.trim().length > 0 ? err.message : null;
+      return { kind: "network", message: msg };
+    }
+  })();
+
+  const preflightResult = await Promise.race<PreflightResult>([
+    preflight,
+    new Promise<PreflightResult>((resolve) => {
+      window.setTimeout(() => resolve({ kind: "timeout" }), preflightTimeoutMs);
+    }),
+  ]);
+
+  if (preflightResult.kind === "timeout") return { ok: false, code: "PREFLIGHT_TIMEOUT" };
+  if (preflightResult.kind === "http") return { ok: false, code: `HTTP_${preflightResult.status}` };
+  if (preflightResult.kind === "network") return { ok: false, code: preflightResult.message ? `NETWORK_${preflightResult.message}` : "NETWORK" };
 
   const timeoutMs = 180_000;
   let timeoutId: number | null = null;
