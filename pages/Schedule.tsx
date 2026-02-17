@@ -17,8 +17,10 @@ const Schedule: React.FC = () => {
   });
   const [calendarItems, setCalendarItems] = useState<SchedulingCalendarItem[]>([]);
   const [dayItems, setDayItems] = useState<SchedulingDayItem[]>([]);
+  const [upcomingItemsByDate, setUpcomingItemsByDate] = useState<Record<string, SchedulingDayItem[]>>({});
   const [loadingCalendar, setLoadingCalendar] = useState(false);
   const [loadingDay, setLoadingDay] = useState(false);
+  const [loadingUpcoming, setLoadingUpcoming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const monthKey = useMemo(() => {
@@ -33,6 +35,30 @@ const Schedule: React.FC = () => {
     const d = String(selectedDate.getDate()).padStart(2, '0');
     return `${y}-${m}-${d}`;
   }, [selectedDate]);
+
+  const dateKeyFromDate = (d: Date): string => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${dd}`;
+  };
+
+  const addDays = (d: Date, days: number): Date => {
+    const next = new Date(d);
+    next.setDate(next.getDate() + days);
+    return next;
+  };
+
+  const startOfWeek = (d: Date): Date => {
+    const base = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    base.setDate(base.getDate() - base.getDay());
+    return base;
+  };
+
+  useEffect(() => {
+    if (mode !== 'month') return;
+    setMonthDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1));
+  }, [mode, selectedDate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -73,6 +99,38 @@ const Schedule: React.FC = () => {
       cancelled = true;
     };
   }, [selectedKey]);
+
+  useEffect(() => {
+    if (mode !== 'upcoming') return;
+    let cancelled = false;
+    const load = async () => {
+      setLoadingUpcoming(true);
+      setError(null);
+      try {
+        const today = new Date();
+        const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const keys = Array.from({ length: 7 }, (_, i) => dateKeyFromDate(addDays(start, i)));
+        const nextMap: Record<string, SchedulingDayItem[]> = {};
+        for (const key of keys) {
+          try {
+            const res = await apiGetSchedulingDay(key);
+            nextMap[key] = res.items;
+          } catch {
+            nextMap[key] = [];
+          }
+        }
+        if (!cancelled) setUpcomingItemsByDate(nextMap);
+      } catch {
+        if (!cancelled) setError('Failed to load upcoming schedule');
+      } finally {
+        if (!cancelled) setLoadingUpcoming(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
 
   const calendarByDate = useMemo(() => {
     const map = new Map<string, { hasScheduled: boolean; hasDue: boolean; hasOverdue: boolean; total: number }> ();
@@ -137,6 +195,15 @@ const Schedule: React.FC = () => {
     setSelectedDate(next);
   };
 
+  const weekStart = useMemo(() => startOfWeek(selectedDate), [selectedDate]);
+  const weekDates = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+
+  const isSameDay = (a: Date, b: Date): boolean => {
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  };
+
+  const dateLabelLong = (d: Date): string => d.toLocaleDateString(undefined, { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' });
+
   return (
     <div className="relative flex min-h-screen w-full flex-col bg-white dark:bg-slate-900">
       <header className="sticky top-0 z-20 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-4 pt-4 pb-2">
@@ -178,122 +245,261 @@ const Schedule: React.FC = () => {
       </header>
 
       <main className="flex-1 px-4 pb-24">
-        {/* Calendar Grid */}
-        <div className="bg-white dark:bg-slate-800/50 rounded-2xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 my-2">
-          <div className="flex items-center justify-between mb-4">
-            <button onClick={goPrevMonth} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_left</span></button>
-            <h3 className="font-bold text-lg">{monthLabel}</h3>
-            <button onClick={goNextMonth} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_right</span></button>
+        {mode === 'month' ? (
+          <div className="bg-white dark:bg-slate-800/50 rounded-2xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 my-2">
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={goPrevMonth} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_left</span></button>
+              <h3 className="font-bold text-lg">{monthLabel}</h3>
+              <button onClick={goNextMonth} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_right</span></button>
+            </div>
+            <div className="grid grid-cols-7 gap-y-2 text-center">
+              {weekDays.map(day => (
+                <div key={day} className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tighter">{day}</div>
+              ))}
+
+              {Array.from({ length: startOffset }, (_, i) => (
+                <div key={`empty-${i}`} className="h-10" />
+              ))}
+
+              {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
+                const dayKey = `${monthKey}-${String(day).padStart(2, '0')}`;
+                const meta = calendarByDate.get(dayKey);
+                const now = new Date();
+                const isToday =
+                  day === now.getDate() &&
+                  monthDate.getMonth() === now.getMonth() &&
+                  monthDate.getFullYear() === now.getFullYear();
+                const isSelected = dayKey === selectedKey;
+                const hasEvent = meta ? meta.total > 0 : false;
+                const hasOverdue = meta ? meta.hasOverdue : false;
+                const hasDue = meta ? meta.hasDue : false;
+
+                let btnClass =
+                  'h-10 w-full flex items-center justify-center text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 relative';
+                if (isToday) btnClass = 'h-10 w-full flex items-center justify-center text-sm font-bold rounded-lg bg-primary text-white shadow-lg shadow-primary/30';
+                if (isSelected) btnClass = 'h-10 w-full flex items-center justify-center text-sm font-bold rounded-lg border-2 border-primary text-primary bg-primary/10';
+                if (hasEvent && !isSelected && !isToday) btnClass += hasOverdue || hasDue ? ' border-2 border-[#f59e0b]' : ' border-2 border-primary/30';
+
+                return (
+                  <button key={dayKey} onClick={() => onPickDay(day)} className={btnClass} disabled={loadingCalendar}>
+                    {day}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="grid grid-cols-7 gap-y-2 text-center">
-            {weekDays.map(day => (
-              <div key={day} className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-tighter">{day}</div>
-            ))}
+        ) : null}
 
-            {Array.from({ length: startOffset }, (_, i) => (
-              <div key={`empty-${i}`} className="h-10" />
-            ))}
-
-            {Array.from({ length: daysInMonth }, (_, i) => i + 1).map((day) => {
-              const dayKey = `${monthKey}-${String(day).padStart(2, '0')}`;
-              const meta = calendarByDate.get(dayKey);
-              const now = new Date();
-              const isToday =
-                day === now.getDate() &&
-                monthDate.getMonth() === now.getMonth() &&
-                monthDate.getFullYear() === now.getFullYear();
-              const isSelected = dayKey === selectedKey;
-              const hasEvent = meta ? meta.total > 0 : false;
-              const hasOverdue = meta ? meta.hasOverdue : false;
-              const hasDue = meta ? meta.hasDue : false;
-
-              let btnClass =
-                'h-10 w-full flex items-center justify-center text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 relative';
-              if (isToday) btnClass = 'h-10 w-full flex items-center justify-center text-sm font-bold rounded-lg bg-primary text-white shadow-lg shadow-primary/30';
-              if (isSelected) btnClass = 'h-10 w-full flex items-center justify-center text-sm font-bold rounded-lg border-2 border-primary text-primary bg-primary/10';
-              if (hasEvent && !isSelected && !isToday) btnClass += hasOverdue || hasDue ? ' border-2 border-[#f59e0b]' : ' border-2 border-primary/30';
-
-              return (
-                <button key={dayKey} onClick={() => onPickDay(day)} className={btnClass} disabled={loadingCalendar}>
-                  {day}
-                </button>
-              );
-            })}
+        {mode === 'week' ? (
+          <div className="bg-white dark:bg-slate-800/50 rounded-2xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 my-2">
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={() => setSelectedDate((d) => addDays(d, -7))} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_left</span></button>
+              <h3 className="font-bold text-lg">Week</h3>
+              <button onClick={() => setSelectedDate((d) => addDays(d, 7))} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_right</span></button>
+            </div>
+            <div className="grid grid-cols-7 gap-2 text-center">
+              {weekDates.map((d, idx) => {
+                const key = dateKeyFromDate(d);
+                const meta = calendarByDate.get(key);
+                const hasEvent = meta ? meta.total > 0 : false;
+                const isSelected = isSameDay(d, selectedDate);
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setSelectedDate(d)}
+                    className={`rounded-xl px-2 py-2 flex flex-col items-center justify-center gap-1 ${isSelected ? 'bg-primary text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'}`}
+                  >
+                    <span className={`text-[10px] font-bold ${isSelected ? 'text-white/90' : 'text-slate-400 dark:text-slate-500'}`}>{weekDays[idx]}</span>
+                    <span className="text-sm font-bold leading-none">{d.getDate()}</span>
+                    <span className={`h-1 w-1 rounded-full ${hasEvent ? (isSelected ? 'bg-white' : 'bg-primary') : 'bg-transparent'}`} />
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        ) : null}
 
-        {/* Selected Day Tasks */}
-        <div className="flex items-center justify-between mt-6 mb-4">
-          <h3 className="text-lg font-bold">Tasks on {selectedLabel}</h3>
-          <span className="text-xs font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">{dayItems.length} Scheduled</span>
-        </div>
+        {mode === 'day' ? (
+          <div className="bg-white dark:bg-slate-800/50 rounded-2xl p-4 shadow-sm border border-slate-100 dark:border-slate-800 my-2">
+            <div className="flex items-center justify-between">
+              <button onClick={() => setSelectedDate((d) => addDays(d, -1))} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_left</span></button>
+              <h3 className="font-bold text-sm text-slate-700 dark:text-slate-200">{dateLabelLong(selectedDate)}</h3>
+              <button onClick={() => setSelectedDate((d) => addDays(d, 1))} className="p-2 text-slate-400"><span className="material-symbols-outlined">chevron_right</span></button>
+            </div>
+          </div>
+        ) : null}
 
-        <div className="space-y-3">
-          {error ? (
-            <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
-          ) : loadingDay ? (
-            <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
-          ) : dayItems.length === 0 ? (
-            <div className="text-sm text-slate-500 dark:text-slate-400">No tasks scheduled for this day.</div>
-          ) : (
-            dayItems.map((t) => {
-              const { time, ampm } = formatTime(t.scheduledDueAt);
-              const borderColor = t.bucket === 'overdue' ? 'border-status-red' : t.bucket === 'due' ? 'border-[#f59e0b]' : 'border-primary';
-              const priorityClass =
-                t.priority.toLowerCase() === 'high'
-                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                  : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400';
-              const statusDot =
-                t.status.toLowerCase() === 'in_progress'
-                  ? 'bg-[#10b981]'
-                  : t.bucket === 'overdue'
-                    ? 'bg-status-red'
-                    : 'bg-slate-300';
-              const statusTextClass =
-                t.status.toLowerCase() === 'in_progress'
-                  ? 'text-[#10b981]'
-                  : t.bucket === 'overdue'
-                    ? 'text-status-red'
-                    : 'text-slate-500';
-              const title = t.asset.name || t.asset.assetTag || t.template.name;
-              const canOpen = isUuid(t.id);
-              const onOpen = () => {
-                if (!canOpen) return;
-                navigate(`/task/${t.id}`);
-              };
+        {mode === 'upcoming' ? (
+          <div className="mt-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold">Upcoming (next 7 days)</h3>
+              <span className="text-xs font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">
+                {Object.values(upcomingItemsByDate).reduce((acc, items) => acc + items.length, 0)} Scheduled
+              </span>
+            </div>
 
-              return (
-                <div
-                  key={t.id}
-                  onClick={onOpen}
-                  className={`bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border-l-4 ${borderColor} border-t border-r border-b border-slate-100 dark:border-slate-800 flex items-start gap-4 ${canOpen ? 'cursor-pointer' : 'opacity-70'}`}
-                >
-                  <div className="flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-700/50 rounded-lg px-3 py-2 min-w-[70px]">
-                    <span className="text-xs font-bold text-slate-400 dark:text-slate-500">{time}</span>
-                    <span className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">{ampm}</span>
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex justify-between items-start mb-1">
-                      <h4 className="font-bold text-slate-900 dark:text-slate-100 leading-tight">{title}</h4>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${priorityClass}`}>{t.priority}</span>
-                    </div>
-                    <p className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                      <span className="material-symbols-outlined text-sm">settings_input_component</span>
-                      {t.asset.assetTag ? `Asset: ${t.asset.assetTag}` : 'Asset'}
-                    </p>
-                    <div className="mt-3 flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <div className={`w-2 h-2 rounded-full ${statusDot}`}></div>
-                        <span className={`text-xs font-medium ${statusTextClass}`}>{t.bucket === 'due' ? 'Due Today' : t.bucket === 'overdue' ? 'Overdue' : t.status.replace('_', ' ')}</span>
+            <div className="space-y-5">
+              {error ? (
+                <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
+              ) : loadingUpcoming ? (
+                <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
+              ) : Object.keys(upcomingItemsByDate).length === 0 ? (
+                <div className="text-sm text-slate-500 dark:text-slate-400">No upcoming schedule loaded.</div>
+              ) : Object.entries(upcomingItemsByDate).every(([, items]) => items.length === 0) ? (
+                <div className="text-sm text-slate-500 dark:text-slate-400">No tasks scheduled in the next 7 days.</div>
+              ) : (
+                Object.entries(upcomingItemsByDate).map(([dateKey, items]) => {
+                  const label = new Date(`${dateKey}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+                  return (
+                    <div key={dateKey}>
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-bold text-slate-700 dark:text-slate-200">{label}</h4>
+                        <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2 py-0.5 rounded-full">{items.length}</span>
                       </div>
-                      <span className="material-symbols-outlined text-slate-300">chevron_right</span>
+                      <div className="space-y-3">
+                        {items.length === 0 ? (
+                          <div className="text-sm text-slate-500 dark:text-slate-400">No tasks.</div>
+                        ) : (
+                          items.map((t) => {
+                            const { time, ampm } = formatTime(t.scheduledDueAt);
+                            const borderColor = t.bucket === 'overdue' ? 'border-status-red' : t.bucket === 'due' ? 'border-[#f59e0b]' : 'border-primary';
+                            const priorityClass =
+                              t.priority.toLowerCase() === 'high'
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400';
+                            const statusDot =
+                              t.status.toLowerCase() === 'in_progress'
+                                ? 'bg-[#10b981]'
+                                : t.bucket === 'overdue'
+                                  ? 'bg-status-red'
+                                  : 'bg-slate-300';
+                            const statusTextClass =
+                              t.status.toLowerCase() === 'in_progress'
+                                ? 'text-[#10b981]'
+                                : t.bucket === 'overdue'
+                                  ? 'text-status-red'
+                                  : 'text-slate-500';
+                            const title = t.asset.name || t.asset.assetTag || t.template.name;
+                            const canOpen = isUuid(t.id);
+                            const onOpen = () => {
+                              if (!canOpen) return;
+                              navigate(`/task/${t.id}`);
+                            };
+
+                            return (
+                              <div
+                                key={t.id}
+                                onClick={onOpen}
+                                className={`bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border-l-4 ${borderColor} border-t border-r border-b border-slate-100 dark:border-slate-800 flex items-start gap-4 ${canOpen ? 'cursor-pointer' : 'opacity-70'}`}
+                              >
+                                <div className="flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-700/50 rounded-lg px-3 py-2 min-w-[70px]">
+                                  <span className="text-xs font-bold text-slate-400 dark:text-slate-500">{time}</span>
+                                  <span className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">{ampm}</span>
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex justify-between items-start mb-1">
+                                    <h4 className="font-bold text-slate-900 dark:text-slate-100 leading-tight">{title}</h4>
+                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${priorityClass}`}>{t.priority}</span>
+                                  </div>
+                                  <p className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                                    <span className="material-symbols-outlined text-sm">settings_input_component</span>
+                                    {t.asset.assetTag ? `Asset: ${t.asset.assetTag}` : 'Asset'}
+                                  </p>
+                                  <div className="mt-3 flex items-center justify-between">
+                                    <div className="flex items-center gap-1.5">
+                                      <div className={`w-2 h-2 rounded-full ${statusDot}`}></div>
+                                      <span className={`text-xs font-medium ${statusTextClass}`}>{t.bucket === 'due' ? 'Due Today' : t.bucket === 'overdue' ? 'Overdue' : t.status.replace('_', ' ')}</span>
+                                    </div>
+                                    <span className="material-symbols-outlined text-slate-300">chevron_right</span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mt-6 mb-4">
+              <h3 className="text-lg font-bold">Tasks on {selectedLabel}</h3>
+              <span className="text-xs font-semibold text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-full">{dayItems.length} Scheduled</span>
+            </div>
+
+            <div className="space-y-3">
+              {error ? (
+                <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
+              ) : loadingDay ? (
+                <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
+              ) : dayItems.length === 0 ? (
+                <div className="text-sm text-slate-500 dark:text-slate-400">No tasks scheduled for this day.</div>
+              ) : (
+                dayItems.map((t) => {
+                  const { time, ampm } = formatTime(t.scheduledDueAt);
+                  const borderColor = t.bucket === 'overdue' ? 'border-status-red' : t.bucket === 'due' ? 'border-[#f59e0b]' : 'border-primary';
+                  const priorityClass =
+                    t.priority.toLowerCase() === 'high'
+                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                      : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400';
+                  const statusDot =
+                    t.status.toLowerCase() === 'in_progress'
+                      ? 'bg-[#10b981]'
+                      : t.bucket === 'overdue'
+                        ? 'bg-status-red'
+                        : 'bg-slate-300';
+                  const statusTextClass =
+                    t.status.toLowerCase() === 'in_progress'
+                      ? 'text-[#10b981]'
+                      : t.bucket === 'overdue'
+                        ? 'text-status-red'
+                        : 'text-slate-500';
+                  const title = t.asset.name || t.asset.assetTag || t.template.name;
+                  const canOpen = isUuid(t.id);
+                  const onOpen = () => {
+                    if (!canOpen) return;
+                    navigate(`/task/${t.id}`);
+                  };
+
+                  return (
+                    <div
+                      key={t.id}
+                      onClick={onOpen}
+                      className={`bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border-l-4 ${borderColor} border-t border-r border-b border-slate-100 dark:border-slate-800 flex items-start gap-4 ${canOpen ? 'cursor-pointer' : 'opacity-70'}`}
+                    >
+                      <div className="flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-700/50 rounded-lg px-3 py-2 min-w-[70px]">
+                        <span className="text-xs font-bold text-slate-400 dark:text-slate-500">{time}</span>
+                        <span className="text-[10px] font-medium text-slate-400 uppercase tracking-widest">{ampm}</span>
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex justify-between items-start mb-1">
+                          <h4 className="font-bold text-slate-900 dark:text-slate-100 leading-tight">{title}</h4>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${priorityClass}`}>{t.priority}</span>
+                        </div>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                          <span className="material-symbols-outlined text-sm">settings_input_component</span>
+                          {t.asset.assetTag ? `Asset: ${t.asset.assetTag}` : 'Asset'}
+                        </p>
+                        <div className="mt-3 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <div className={`w-2 h-2 rounded-full ${statusDot}`}></div>
+                            <span className={`text-xs font-medium ${statusTextClass}`}>{t.bucket === 'due' ? 'Due Today' : t.bucket === 'overdue' ? 'Overdue' : t.status.replace('_', ' ')}</span>
+                          </div>
+                          <span className="material-symbols-outlined text-slate-300">chevron_right</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </>
+        )}
       </main>
       
       {/* Bottom Nav placeholder logic is handled by global nav, but schedule page in design has a specific nav. 

@@ -1056,13 +1056,15 @@ const TaskDetail: React.FC = () => {
     <div className="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen flex flex-col font-display">
       <header className="sticky top-0 z-30 bg-white/80 dark:bg-background-dark/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center justify-between p-4 pb-2">
-          <div className="flex items-center gap-3">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
             <button onClick={() => navigate(-1)} className="flex items-center justify-center size-10 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors">
               <span className="material-symbols-outlined text-slate-700 dark:text-slate-300">arrow_back_ios_new</span>
             </button>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{task.taskNumber}</h1>
+            <h1 className="flex-1 min-w-0 text-[17px] sm:text-xl font-bold tracking-tight text-slate-900 dark:text-white leading-tight break-words">
+              {task.taskNumber}
+            </h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <span
               className={`material-symbols-outlined ${
                 !online ? 'text-amber-600 dark:text-amber-300' : pendingSyncCount > 0 ? 'text-primary' : 'text-emerald-500'
@@ -1077,28 +1079,35 @@ const TaskDetail: React.FC = () => {
             </button>
           </div>
         </div>
-        <div className="px-4 pb-3 flex gap-2">
-          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+        <div className="px-4 pb-3 flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
             {task.status}
           </span>
-          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 uppercase tracking-wider">
-            Priority: {task.priority}
+          <span className="inline-flex items-center px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 uppercase tracking-wider">
+            <span className="sm:hidden">P:&nbsp;</span>
+            <span className="hidden sm:inline">Priority:&nbsp;</span>
+            {task.priority}
           </span>
-          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700">
-            {assignedLabel}
+          <span className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 max-w-[70vw] sm:max-w-none">
+            <span className="material-symbols-outlined text-[16px]">person</span>
+            <span className="truncate">{assignedLabel}</span>
           </span>
           {queuedTaskEvidenceCount > 0 ? (
-            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
-              Queued attachments: {queuedTaskEvidenceCount}
+            <span className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-primary/10 text-primary border border-primary/20">
+              <span className="material-symbols-outlined text-[16px]">attachment</span>
+              <span className="sm:hidden">{queuedTaskEvidenceCount}</span>
+              <span className="hidden sm:inline">Queued attachments: {queuedTaskEvidenceCount}</span>
             </span>
           ) : null}
           {canAssign ? (
             <button
               type="button"
               onClick={openAssign}
-              className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700"
+              aria-label={assignButtonLabel}
+              className="inline-flex items-center gap-1 px-2.5 sm:px-3 py-0.5 sm:py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700"
             >
-              {assignButtonLabel}
+              <span className="material-symbols-outlined text-[16px]">person_add</span>
+              <span className="hidden sm:inline">{assignButtonLabel}</span>
             </button>
           ) : null}
         </div>
