@@ -7,8 +7,8 @@ android {
         applicationId "com.merdekatsingshan.pmtech"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 2
-        versionName "1.0.0"
+        versionCode 4
+        versionName "1.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -23,7 +23,11 @@ android {
         enabled = true
     }
     buildTypes {
+        debug {
+            manifestPlaceholders = [usesCleartextTraffic: true]
+        }
         release {
+            manifestPlaceholders = [usesCleartextTraffic: false]
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }

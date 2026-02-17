@@ -1665,6 +1665,35 @@ export const apiGetLatestAppUpdate = async (appId: string): Promise<LatestAppUpd
   return res.latest;
 };
 
+export type AppUpdatePolicy = {
+  enabled: boolean;
+  requiredVersionCode: number | null;
+  shouldDownload: boolean;
+  message: string | null;
+};
+
+export const apiGetAppUpdatePolicy = async (input: {
+  appId: string;
+  platform: "android" | "ios" | "web";
+  versionCode: number;
+}): Promise<AppUpdatePolicy> => {
+  const q = new URLSearchParams();
+  q.set("appId", input.appId);
+  q.set("platform", input.platform);
+  q.set("versionCode", String(input.versionCode));
+  return apiGet<AppUpdatePolicy>(`/api/app-updates/policy?${q.toString()}`);
+};
+
+export const apiReportAppInstallation = async (input: {
+  installationId: string;
+  appId: string;
+  platform: "android" | "ios" | "web";
+  versionCode: number;
+  versionName?: string;
+}): Promise<{ ok: true }> => {
+  return apiPost<{ ok: true }>(`/api/app-updates/report`, input);
+};
+
 type SemverParts = { major: number; minor: number; patch: number };
 
 const parseSemverParts = (versionName: string): SemverParts | null => {
@@ -1727,5 +1756,27 @@ export const downloadAndInstallAppUpdate = async (latest: LatestAppUpdate): Prom
   const base = getApiBase();
   const absolute = latest.downloadUrl.startsWith("http") ? latest.downloadUrl : `${base}${latest.downloadUrl}`;
   const plugin = await getAppUpdaterPlugin();
-  return plugin.downloadAndInstall({ url: absolute, fileName: latest.fileName });
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(absolute, { method: "HEAD", signal: controller.signal });
+    window.clearTimeout(timeoutId);
+    if (!res.ok) return { ok: false, code: `HTTP_${res.status}` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error && err.message.trim().length > 0 ? err.message : null;
+    return { ok: false, code: msg ? `NETWORK_${msg}` : "NETWORK" };
+  }
+
+  const timeoutMs = 180_000;
+  let timeoutId: number | null = null;
+  const timeoutPromise = new Promise<{ ok: boolean; code?: string }>((resolve) => {
+    timeoutId = window.setTimeout(() => resolve({ ok: false, code: "TIMEOUT" }), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([plugin.downloadAndInstall({ url: absolute, fileName: latest.fileName }), timeoutPromise]);
+  } finally {
+    if (timeoutId !== null) window.clearTimeout(timeoutId);
+  }
 };

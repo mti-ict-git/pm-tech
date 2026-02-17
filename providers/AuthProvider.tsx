@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { biometricLoginGetCredentials, clearAccessToken, clearRefreshToken, getAccessToken, setAuthInvalidListener, setBiometricRefreshToken } from "../lib/auth";
-import { apiRegisterDevice, getMe, login, refreshWithToken, type LoginProvider, type User } from "../lib/api";
+import { apiRegisterDevice, apiReportAppInstallation, getMe, login, refreshWithToken, type LoginProvider, type User } from "../lib/api";
 
 const PUSH_ENABLED_KEY = "pm-tech-push-enabled";
 const PUSH_TOKEN_KEY = "pm-tech-push-token";
+const INSTALLATION_ID_KEY = "pm-tech-installation-id";
 
 const isPushEnabled = (): boolean => {
   try {
@@ -19,6 +20,30 @@ const isPushEnabled = (): boolean => {
 type PushPermissionResult = { receive: string };
 type PushRegistrationToken = { value: string };
 type PushTapEvent = { notification?: unknown };
+
+const isUuid = (value: string): boolean => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+const createUuid = (): string => {
+  try {
+    const uuid = crypto.randomUUID();
+    if (typeof uuid === "string" && isUuid(uuid)) return uuid;
+  } catch {}
+
+  try {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  } catch {}
+
+  const fallback = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  if (isUuid(fallback)) return fallback;
+  return "00000000-0000-4000-8000-000000000000";
+};
 
 const readString = (obj: Record<string, unknown>, key: string): string | null => {
   const raw = obj[key];
@@ -199,6 +224,47 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       } catch {
       } finally {
         pushRegistering.current = false;
+      }
+    })();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    void (async () => {
+      try {
+        const { Capacitor } = await import("@capacitor/core");
+        if (!Capacitor.isNativePlatform()) return;
+
+        const platformRaw = Capacitor.getPlatform();
+        if (platformRaw !== "android" && platformRaw !== "ios" && platformRaw !== "web") return;
+
+        const { App } = await import("@capacitor/app");
+        const info = await App.getInfo();
+        const versionCode = Number.parseInt(info.build, 10);
+        if (!Number.isFinite(versionCode) || versionCode < 1) return;
+
+        const versionName = typeof info.version === "string" && info.version.trim() ? info.version.trim() : undefined;
+
+        const installationId = (() => {
+          try {
+            const existing = window.localStorage.getItem(INSTALLATION_ID_KEY);
+            if (existing && existing.trim() && isUuid(existing.trim())) return existing.trim();
+          } catch {}
+          const created = createUuid();
+          try {
+            window.localStorage.setItem(INSTALLATION_ID_KEY, created);
+          } catch {}
+          return created;
+        })();
+
+        await apiReportAppInstallation({
+          installationId,
+          appId: "pm-tech",
+          platform: platformRaw,
+          versionCode,
+          versionName,
+        });
+      } catch {
       }
     })();
   }, [user]);
