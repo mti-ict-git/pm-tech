@@ -309,8 +309,16 @@ const Profile: React.FC = () => {
             </div>
           </div>
           {latestUpdate ? (
-            <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-              Latest: v{latestUpdate.versionName} • File: {latestUpdate.fileName}
+            <div className="mt-3">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Latest: v{latestUpdate.versionName} • File: {latestUpdate.fileName}
+              </div>
+              {latestUpdate.releaseNotes && latestUpdate.releaseNotes.trim().length > 0 ? (
+                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                  <div className="text-xs font-bold">What&apos;s new</div>
+                  <div className="mt-2 whitespace-pre-wrap text-xs text-slate-700 dark:text-slate-200">{latestUpdate.releaseNotes}</div>
+                </div>
+              ) : null}
             </div>
           ) : null}
         </div>

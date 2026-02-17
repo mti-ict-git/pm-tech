@@ -1658,6 +1658,7 @@ export type LatestAppUpdate = {
   sha256: string;
   modifiedAt: string;
   downloadUrl: string;
+  releaseNotes?: string;
 };
 
 export const apiGetLatestAppUpdate = async (appId: string): Promise<LatestAppUpdate> => {

@@ -155,6 +155,12 @@ const ForcedUpdateHandler: React.FC = () => {
           <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
             Current build: {state.currentVersionCode} • Required build: {state.requiredVersionCode} • Latest: v{state.latest.versionName}
           </p>
+          {state.latest.releaseNotes && state.latest.releaseNotes.trim().length > 0 ? (
+            <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-800 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
+              <div className="text-sm font-semibold">What&apos;s new</div>
+              <div className="mt-2 whitespace-pre-wrap text-sm text-slate-700 dark:text-slate-200">{state.latest.releaseNotes}</div>
+            </div>
+          ) : null}
           {error ? <p className="mt-2 text-sm font-semibold text-red-600">{error}</p> : null}
 
           <div className="mt-4 flex justify-end gap-2">
