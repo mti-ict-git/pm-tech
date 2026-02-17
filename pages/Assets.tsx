@@ -56,15 +56,6 @@ const statusPill = (a: Asset): { label: string; className: string } => {
   return { label: 'Operational', className: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' };
 };
 
-const statusPillRecent = (r: RecentAsset): { label: string; className: string } => {
-  const status = (r.assetStatus ?? '').trim().toLowerCase();
-  if (status.includes('repair')) return { label: 'In Repair', className: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' };
-  if (status.includes('down') || status.includes('broken')) return { label: 'Down', className: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400' };
-  if (r.assetOperationalStatus === 'broken') return { label: 'Broken', className: 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400' };
-  if (r.assetOperationalStatus === 'archived') return { label: 'Archived', className: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400' };
-  return { label: 'Operational', className: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' };
-};
-
 const notePreview = (value: string | null): string | null => {
   if (!value) return null;
   const normalized = value.replace(/\s+/g, ' ').trim();
@@ -82,6 +73,8 @@ const Assets: React.FC = () => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [page, setPage] = useState<number>(1);
+  const [hasMore, setHasMore] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
@@ -122,29 +115,31 @@ const Assets: React.FC = () => {
     }
   }, [selectedCategoryId, visibleCategoryIds]);
 
-  const showingResults = useMemo(() => {
-    return search.trim().length > 0 || selectedCategoryId !== 'all';
+  const isAllAssetsView = useMemo(() => {
+    return search.trim().length === 0 && selectedCategoryId === 'all';
+  }, [search, selectedCategoryId]);
+
+  useEffect(() => {
+    setPage(1);
   }, [search, selectedCategoryId]);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!showingResults) {
-        setAssets([]);
-        setError(null);
-        return;
-      }
       setLoading(true);
       setError(null);
       try {
         const res = await apiListAssets({
-          page: 1,
+          page,
           pageSize: 50,
           search: search.trim() ? search.trim() : undefined,
           categoryId: selectedCategoryId === 'all' ? undefined : selectedCategoryId,
           categoryIds: visibleCategoryIds ?? undefined,
         });
-        if (!cancelled) setAssets(res.items);
+        if (!cancelled) {
+          setHasMore(res.items.length === 50);
+          setAssets((prev) => (page === 1 ? res.items : [...prev, ...res.items]));
+        }
       } catch {
         if (!cancelled) setError('Failed to load assets');
       } finally {
@@ -160,12 +155,7 @@ const Assets: React.FC = () => {
       cancelled = true;
       window.clearTimeout(handle);
     };
-  }, [showingResults, search, selectedCategoryId]);
-
-  const clearRecents = (): void => {
-    setRecentAssets([]);
-    writeRecentAssets([]);
-  };
+  }, [page, search, selectedCategoryId, visibleCategoryIds]);
 
   const rememberAsset = (next: RecentAsset): void => {
     const updated = [next, ...recentAssets.filter((r) => r.id !== next.id)];
@@ -185,11 +175,6 @@ const Assets: React.FC = () => {
       viewedAt: new Date().toISOString(),
     });
     navigate(`/asset/${a.id}`);
-  };
-
-  const onOpenRecent = (r: RecentAsset): void => {
-    rememberAsset({ ...r, viewedAt: new Date().toISOString() });
-    navigate(`/asset/${r.id}`);
   };
 
   const onScanAssetTag = async (): Promise<void> => {
@@ -316,17 +301,14 @@ const Assets: React.FC = () => {
         </div>
 
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold">{showingResults ? 'Results' : 'Recent Assets'}</h3>
-          {!showingResults && recentAssets.length > 0 && (
-            <button onClick={clearRecents} className="text-primary text-sm font-semibold">Clear All</button>
-          )}
+          <h3 className="text-lg font-bold">{isAllAssetsView ? 'All Assets' : 'Results'}</h3>
         </div>
 
         {error ? (
           <div className="text-sm text-red-600 dark:text-red-400">{error}</div>
         ) : loading ? (
           <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
-        ) : showingResults ? (
+        ) : (
           assets.length === 0 ? (
             <div className="text-sm text-slate-500 dark:text-slate-400">No assets found.</div>
           ) : (
@@ -357,38 +339,19 @@ const Assets: React.FC = () => {
               ))}
             </div>
           )
-        ) : (
-          recentAssets.length === 0 ? (
-            <div className="text-sm text-slate-500 dark:text-slate-400">No recent assets.</div>
-          ) : (
-            <div className="space-y-4">
-              {recentAssets.map((r) => (
-                <div key={r.id} onClick={() => onOpenRecent(r)} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm flex items-center justify-between cursor-pointer active:bg-slate-50 dark:active:bg-slate-800">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">#{r.assetTag}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${statusPillRecent(r).className}`}>{statusPillRecent(r).label}</span>
-                    </div>
-                    <h4 className="text-base font-semibold text-slate-900 dark:text-white">{r.name}</h4>
-                    <div className="flex items-center text-slate-500 dark:text-slate-400 mt-1">
-                      <span className="material-symbols-outlined text-sm mr-1">location_on</span>
-                      <span className="text-sm">{r.locationName ?? '—'}</span>
-                    </div>
-                    {r.notes ? (
-                      <div className="flex items-center text-slate-500 dark:text-slate-400 mt-1 min-w-0">
-                        <span className="material-symbols-outlined text-sm mr-1">note</span>
-                        <span className="text-sm truncate">{r.notes}</span>
-                      </div>
-                    ) : null}
-                  </div>
-                  <button className="size-10 flex items-center justify-center bg-slate-50 dark:bg-slate-800 rounded-lg text-primary">
-                    <span className="material-symbols-outlined">qr_code_2</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )
         )}
+
+        {!loading && !error && assets.length > 0 && hasMore ? (
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={() => setPage((p) => p + 1)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+            >
+              Load more
+            </button>
+          </div>
+        ) : null}
       </main>
     </div>
   );
